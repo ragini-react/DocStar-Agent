@@ -1,0 +1,24 @@
+{
+  "name": "docstar-backlink-agent",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "node --test tests/unit/*.test.js",
+    "start": "node src/server.js",
+    "test:phase1": "node --env-file=.env tests/phase1-ai.mjs && node --env-file=.env tests/phase1-gmail.mjs"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "type": "module",
+  "dependencies": {
+    "better-sqlite3": "^11.8.1",
+    "express": "^4.22.3",
+    "playwright-core": "^1.49.1",
+    "viasocket-apps": "^0.15.0"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

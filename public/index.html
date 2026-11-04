@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DocStar Backlink Agent</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/styles.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <div id="login" class="login" hidden>
+    <form id="login-form" class="login-card">
+      <div class="brand"><span class="logo">D</span> DocStar Backlink Agent</div>
+      <p class="muted" id="login-hint">Sign in with the DocStar admin password.</p>
+      <label>Admin password <input id="login-password" type="password" autocomplete="current-password" required></label>
+      <p id="login-error" class="error" role="alert"></p>
+      <button class="btn primary" type="submit">Sign in</button>
+    </form>
+  </div>
+
+  <div id="app" class="shell" hidden>
+    <aside class="sidebar">
+      <div class="brand"><span class="logo">D</span> DocStar <span class="muted">Agent</span></div>
+      <nav id="nav">
+        <a href="#overview" data-view="overview">Overview</a>
+        <a href="#platforms" data-view="platforms">Platforms</a>
+        <a href="#queue" data-view="queue">Needs you <span id="badge-queue" class="badge" hidden></span></a>
+        <a href="#company" data-view="company">DocStar profile <span id="badge-company" class="badge" hidden>!</span></a>
+        <a href="#activity" data-view="activity">Activity</a>
+        <a href="#integrations" data-view="integrations">Integrations</a>
+        <a href="#credentials" data-view="credentials">Credentials</a>
+        <a href="#settings" data-view="settings">Settings</a>
+      </nav>
+      <div class="sidebar-foot">
+        <div class="mini-status"><span id="dot-gmail" class="dot"></span> Gmail</div>
+        <div class="mini-status" id="mini-chrome"><span id="dot-chrome" class="dot"></span> Chrome</div>
+        <button id="logout" class="btn ghost small">Sign out</button>
+      </div>
+    </aside>
+
+    <main>
+      <header class="topbar">
+        <h1 id="view-title">Overview</h1>
+        <div class="controls">
+          <span id="automation-state" class="pill">—</span>
+          <button class="btn primary" data-automation="start">Start</button>
+          <button class="btn" data-automation="pause">Pause</button>
+          <button class="btn" data-automation="resume">Resume</button>
+          <button class="btn danger-ghost" data-automation="stop">Stop</button>
+        </div>
+      </header>
+      <div id="hosted-banner" class="banner" hidden>Hosted copy. Sign-ups and submissions run in the agent's Chrome on the Mac; here you can review data, approve listings and edit the profile.</div>
+      <div id="toast" class="toast" role="status" hidden></div>
+
+      <section id="view-overview" class="view">
+        <div id="kpis" class="kpis"></div>
+        <div class="grid-2">
+          <div class="card"><h2>Platforms by status</h2><div id="by-status" class="bars"></div></div>
+          <div class="card"><h2>Platforms by category</h2><div id="by-category" class="bars"></div></div>
+        </div>
+        <div class="card"><h2>Latest activity</h2><ol id="overview-activity" class="feed compact"></ol></div>
+      </section>
+
+      <section id="view-platforms" class="view" hidden>
+        <div class="toolbar">
+          <input id="f-q" type="search" placeholder="Search name or domain">
+          <select id="f-status"><option value="">All statuses</option></select>
+          <select id="f-category"><option value="">All categories</option></select>
+          <select id="f-pricing"><option value="">Any pricing</option><option>free</option><option>freemium</option><option>paid</option><option>unknown</option></select>
+          <span class="spacer"></span>
+          <button id="btn-discover" class="btn">Run discovery</button>
+          <button id="btn-seeds" class="btn">Import seed list</button>
+          <button id="btn-add" class="btn primary">Add platform</button>
+          <a id="btn-csv" class="btn" href="/api/export/platforms.csv">Export CSV</a>
+        </div>
+        <form id="add-form" class="card add-form" hidden>
+          <input name="name" placeholder="Platform name" required>
+          <input name="url" placeholder="https://example.com" required>
+          <select name="category" id="add-category"><option value="">Category</option></select>
+          <button class="btn primary" type="submit">Add</button>
+          <button class="btn ghost" type="button" id="add-cancel">Cancel</button>
+        </form>
+        <div class="card table-wrap">
+          <table id="platforms-table">
+            <thead><tr>
+              <th>Platform</th><th>Category</th><th>Score</th><th>Pricing</th><th>Status</th>
+              <th>Account</th><th>Submission</th><th>Backlink</th><th>Last checked</th><th></th>
+            </tr></thead>
+            <tbody></tbody>
+          </table>
+          <p id="platforms-empty" class="empty" hidden>No platforms yet. Import the seed list or add one; discovery comes in Phase 3.</p>
+        </div>
+      </section>
+
+      <section id="view-queue" class="view" hidden>
+        <div class="card"><h2>Listings waiting for your approval</h2><p class="muted">Nothing is registered or published on a platform until you approve it here. You can edit the listing before approving.</p><div id="approvals"></div></div>
+        <div class="card" id="browser-queue-card" hidden><h2>Approved, waiting for the browser step</h2><p class="muted">These listings are approved. Registration and submission run in a browser outside this hosted copy.</p><div id="browser-queue"></div></div>
+        <div class="card"><h2>Tasks that need you</h2><p class="muted">CAPTCHAs, sign-ins and anything unclear. Do the step in Chrome, then press Resume.</p><div id="needs-you"></div></div>
+      </section>
+
+      <section id="view-company" class="view" hidden>
+        <div class="card">
+          <div class="row" style="justify-content:space-between;align-items:center">
+            <div><h2 style="margin:0">DocStar profile</h2><p class="muted small" style="margin:4px 0 0">The only facts the agent may use in listings. Drafted from docstar.io; edit anything, then approve.</p></div>
+            <span id="company-pill" class="pill">—</span>
+          </div>
+          <form id="company-form" class="company-form"></form>
+          <div class="row">
+            <button id="company-save" class="btn">Save changes</button>
+            <button id="company-approve" class="btn primary">Approve profile</button>
+            <button id="company-draft" class="btn ghost">Re-draft from docstar.io</button>
+          </div>
+        </div>
+      </section>
+
+      <section id="view-activity" class="view" hidden>
+        <div class="toolbar">
+          <select id="f-level"><option value="">All levels</option><option>info</option><option>success</option><option>warn</option><option>error</option></select>
+          <span class="muted small" id="stream-state">connecting…</span>
+        </div>
+        <div class="card"><ol id="activity" class="feed"></ol></div>
+      </section>
+
+      <section id="view-integrations" class="view" hidden>
+        <div class="grid-2">
+          <div class="card integration">
+            <div class="int-head"><img src="https://stuff.thingsofbrand.com/gmail.com/images/imge_idrA5FDGTH_1763454052978.svg" alt="" width="28" height="28"><h2>Gmail</h2><span id="gmail-pill" class="pill">—</span></div>
+            <p class="muted">Reads verification emails sent to support@docstar.io. Connected through viaSocket; DocStar asks only for the search and read-message permissions and never sends, labels or deletes mail.</p>
+            <dl id="gmail-details" class="details"></dl>
+            <div class="row">
+              <button id="gmail-connect" class="btn primary">Connect Gmail</button>
+              <button id="gmail-test" class="btn" disabled>Test connection</button>
+              <button id="gmail-disconnect" class="btn danger-ghost" disabled>Disconnect</button>
+            </div>
+            <p id="gmail-result" class="muted small"></p>
+          </div>
+          <div class="card integration" id="chrome-card">
+            <div class="int-head"><span class="logo chrome">C</span><h2>Chrome</h2><span id="chrome-pill" class="pill">—</span></div>
+            <p class="muted">The agent works in its own Chrome profile on this Mac. Sign in to Google (support@docstar.io) in it once yourself; the agent never sees or types the Google password.</p>
+            <dl id="chrome-details" class="details"></dl>
+            <div class="row">
+              <button id="chrome-launch" class="btn primary">Open Chrome</button>
+              <button id="chrome-google" class="btn">Sign in to Google</button>
+              <button id="chrome-front" class="btn">Bring to front</button>
+              <button id="chrome-close" class="btn danger-ghost">Close Chrome</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="view-credentials" class="view" hidden>
+        <div class="card">
+          <h2>Platform accounts</h2>
+          <p class="muted">Passwords are encrypted on this machine. Revealing one asks for the admin password again and is written to the activity log.</p>
+          <div id="credentials"></div>
+        </div>
+      </section>
+
+      <section id="view-settings" class="view" hidden>
+        <form id="settings-form" class="card settings">
+          <h2>Guardrails</h2>
+          <label>Maximum sign-ups per hour <input name="max_signups_per_hour" type="number" min="1" max="10" required></label>
+          <label>Check backlinks every (hours) <input name="backlink_check_hours" type="number" min="6" max="72" required></label>
+          <label>Minimum quality score to qualify <input name="min_quality_score" type="number" min="30" max="90" required></label>
+          <label>Platforms per discovery run <input name="discovery_batch" type="number" min="3" max="20" required></label>
+          <label class="check"><input name="require_approval" type="checkbox"> Ask for my approval before registering and submitting on each platform</label>
+          <button class="btn primary" type="submit">Save</button>
+        </form>
+      </section>
+    </main>
+  </div>
+</body>
+</html>

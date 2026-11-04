@@ -1,0 +1,7 @@
+{
+  "$schema": "https://embarko.ai/schema/embarko.json",
+  "appId": "cmvz5kmfh029bsu4vwzrbm3bm",
+  "schedules": [
+    { "cron": "*/5 * * * *", "path": "/tasks/agent-tick", "timezone": "Asia/Kolkata", "name": "DocStar agent queue" }
+  ]
+}
