@@ -49,7 +49,10 @@ export function createApp({ config, db, vault, activity, gmail, chrome, orchestr
   if (mirror) {
     app.post('/sync/push', express.json({ limit: '16mb' }), (req, res) => {
       if (!safeEqual(req.get('authorization') || '', `Bearer ${mirror.token}`)) return res.status(401).json({ error: 'unauthorized' })
-      try { res.json(mirror.receive(req.body || {})) } catch (e) { res.status(500).json({ error: maskError(e) }) }
+      try {
+        const r = mirror.receive(req.body || {})
+        res.status(r.conflict ? 409 : 200).json(r)
+      } catch (e) { res.status(500).json({ error: maskError(e) }) }
     })
   }
   app.use(express.json({ limit: '64kb' }))

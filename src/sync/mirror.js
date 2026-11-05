@@ -6,25 +6,35 @@
 // dashboard since the last push. The Mac carries them out against its own API, so Open Chrome, Start, Resume
 // or Approve pressed on the hosted URL happen on the Mac. Each command is handed out once (at most once).
 //
-// Never mirrored: platform passwords (credentials), the Gmail connection's sealed ids (integration_settings),
+// Never mirrored: platform passwords (only that an account has one, so the Credentials page matches), the Gmail connection's sealed ids (integration_settings),
 // verification links. The hosted copy stops running tasks of its own while it mirrors, so the two never diverge.
-import { createHash } from 'node:crypto'
+//
+// One source only: the hosted copy remembers which agent it mirrors (a random id kept in that agent's database) and
+// refuses pushes from any other agent while that one is online, so a second copy started elsewhere with the same
+// token cannot overwrite the numbers or take the buttons. It also answers with the hash of the records it holds;
+// when that is not the Mac's current hash (a redeploy wiped it, another agent pushed before), the Mac sends them again.
+import { createHash, randomBytes } from 'node:crypto'
+import { hostname } from 'node:os'
 import { getSetting, now, setSetting } from '../db/index.js'
 import { maskError } from '../security/mask.js'
 
 // Parents before children; deleted in reverse.
-export const MIRROR_TABLES = ['platform_categories', 'platforms', 'platform_scores', 'company_information', 'accounts', 'submissions',
+export const MIRROR_TABLES = ['platform_categories', 'platforms', 'platform_scores', 'company_information', 'accounts', 'credentials', 'submissions',
   'backlinks', 'backlink_history', 'email_verifications', 'automation_tasks', 'human_approvals', 'activity_logs', 'system_settings']
 const ACTIVITY_ROWS = 500
 const LOCAL_ONLY_SETTINGS = new Set(['automation_state']) // the Mac's run state travels as status, never as a setting
 const PUSH_MS = 5_000
 const CONNECT_INFO_MS = 5 * 60_000
 const ONLINE_MS = 30_000
+const FULL_PUSH_MS = 60_000 // resend the records at least this often, even when the hosted copy says it has them
+const CONFLICT_LOG_MS = 10 * 60_000
 
 export function buildSnapshot(db) {
   const out = {}
   for (const t of MIRROR_TABLES) {
     if (t === 'activity_logs') out[t] = db.prepare(`SELECT * FROM activity_logs ORDER BY id DESC LIMIT ${ACTIVITY_ROWS}`).all().reverse()
+    // Which accounts have a password, never the password: the sealed value stays on the Mac.
+    else if (t === 'credentials') out[t] = db.prepare('SELECT id, account_id, created_at, revealed_at FROM credentials').all().map(r => ({ ...r, secret_enc: '' }))
     else if (t === 'email_verifications') out[t] = db.prepare('SELECT * FROM email_verifications').all().map(r => ({ ...r, link_enc: null }))
     else if (t === 'system_settings') out[t] = db.prepare('SELECT * FROM system_settings').all().filter(r => !LOCAL_ONLY_SETTINGS.has(r.key) && !r.key.startsWith('mirror_'))
     else out[t] = db.prepare(`SELECT * FROM ${t}`).all()
@@ -38,15 +48,15 @@ export function applySnapshot(db, snap) {
   const columns = t => new Set(db.prepare(`PRAGMA table_info(${t})`).all().map(c => c.name))
   db.transaction(() => {
     db.pragma('defer_foreign_keys = ON')
-    db.prepare('DELETE FROM credentials').run() // a mirror never holds platform passwords
     for (const t of [...MIRROR_TABLES].reverse()) {
       if (t === 'system_settings') db.prepare(`DELETE FROM system_settings WHERE key NOT IN (${[...LOCAL_ONLY_SETTINGS].map(() => '?').join(',')}) AND key NOT LIKE 'mirror_%'`).run(...LOCAL_ONLY_SETTINGS)
       else db.prepare(`DELETE FROM ${t}`).run()
     }
     for (const t of MIRROR_TABLES) {
       const known = columns(t)
-      for (const row of snap[t] || []) {
+      for (let row of snap[t] || []) {
         if (t === 'system_settings' && (LOCAL_ONLY_SETTINGS.has(row.key) || row.key.startsWith('mirror_'))) continue
+        if (t === 'credentials') row = { ...row, secret_enc: '' } // a mirror never holds platform passwords
         const cols = Object.keys(row).filter(c => known.has(c))
         db.prepare(`INSERT INTO ${t} (${cols.join(',')}) VALUES (${cols.map(() => '?').join(',')})`).run(...cols.map(c => row[c]))
       }
@@ -65,22 +75,44 @@ export function createMirrorReceiver({ db, activity, token }) {
     id INTEGER PRIMARY KEY, method TEXT NOT NULL, path TEXT NOT NULL, body TEXT,
     state TEXT NOT NULL DEFAULT 'pending', created_at TEXT NOT NULL, sent_at TEXT)`)
   let status = JSON.parse(getSetting(db, 'mirror_status', 'null') || 'null') // last live status from the Mac
+  let conflictLoggedAt = 0
 
   const lastPush = () => getSetting(db, 'mirror_last_push')
+  const isOnline = () => Boolean(lastPush()) && Date.now() - Date.parse(lastPush()) < ONLINE_MS
+  const sourceOf = body => ({ id: String(body.source?.id || 'unidentified').slice(0, 64), host: String(body.source?.host || 'an older agent').slice(0, 100) })
   return {
     token,
     /** Mirroring once the Mac has pushed at least once: its data is what this copy shows. */
     on: () => Boolean(lastPush()),
-    online: () => Boolean(lastPush()) && Date.now() - Date.parse(lastPush()) < ONLINE_MS,
-    info() { return { on: this.on(), online: this.online(), lastPush: lastPush() } },
+    online: isOnline,
+    source: () => JSON.parse(getSetting(db, 'mirror_source', 'null') || 'null'),
+    info() { return { on: this.on(), online: this.online(), lastPush: lastPush(), source: this.source()?.host || null } },
     state: () => status?.state ?? 'stopped',
     chrome: () => ({ ...(status?.chrome || { running: false, attached: false }), via: 'mac' }),
     gmail: () => status?.gmail || { connected: false, error: 'The Mac has not reported Gmail yet' },
     connectInfo: () => status?.connect || null,
 
     receive(body) {
+      const source = sourceOf(body)
+      const current = this.source()
+      if (current && current.id !== source.id) {
+        if (isOnline()) {
+          // Another agent is pushing with the same token while the one mirrored here is online: keep the mirrored one.
+          if (Date.now() - conflictLoggedAt > CONFLICT_LOG_MS) {
+            conflictLoggedAt = Date.now()
+            activity.warn('mirror_conflict', `Refused records from a second agent (${source.host}): this dashboard mirrors ${current.host}`)
+          }
+          return { conflict: true, error: `This dashboard already mirrors the agent on ${current.host}, which is online. Stop this copy, or remove HOSTED_URL from its .env.` }
+        }
+        activity.warn('mirror_source_changed', `Now mirroring the agent on ${source.host} (was ${current.host}, offline)`)
+      }
+      if (!current || current.id !== source.id) {
+        setSetting(db, 'mirror_source', JSON.stringify(source))
+        setSetting(db, 'mirror_hash', '') // what is here came from another agent: ask for a full copy
+      }
       if (body.snapshot) {
         const fresh = applySnapshot(db, body.snapshot)
+        setSetting(db, 'mirror_hash', typeof body.hash === 'string' ? body.hash : '')
         for (const e of fresh.slice(-50)) activity.feed.emit('entry', e) // open dashboards get the newest live
       }
       if (body.status) { status = body.status; setSetting(db, 'mirror_status', JSON.stringify(status)) }
@@ -90,7 +122,7 @@ export function createMirrorReceiver({ db, activity, token }) {
       if (commands.length) db.prepare(`UPDATE mirror_commands SET state = 'sent', sent_at = ? WHERE id IN (${commands.map(() => '?').join(',')})`).run(now(), ...commands.map(c => c.id))
       // Commands older than a day were never picked up: drop them rather than surprise anyone later.
       db.prepare(`DELETE FROM mirror_commands WHERE created_at < ?`).run(new Date(Date.now() - 86400_000).toISOString())
-      return { commands: commands.map(c => ({ ...c, body: c.body ? JSON.parse(c.body) : undefined })) }
+      return { commands: commands.map(c => ({ ...c, body: c.body ? JSON.parse(c.body) : undefined })), have: getSetting(db, 'mirror_hash', '') }
     },
 
     queue(method, path, body) {
@@ -110,7 +142,12 @@ export function commandAllowed({ method, path }) {
 
 export function createMirrorPusher({ db, activity, chrome, gmail, orchestrator, replay, url, token }) {
   const endpoint = `${url.replace(/\/+$/, '')}/sync/push`
-  let lastHash = null
+  // This agent's identity on the hosted copy: random, kept in its own database (mirror_* settings are never pushed).
+  let sourceId = getSetting(db, 'mirror_source_id')
+  if (!sourceId) { sourceId = randomBytes(12).toString('hex'); setSetting(db, 'mirror_source_id', sourceId) }
+  const source = { id: sourceId, host: hostname() }
+  let lastHash = null // the hash of the records the hosted copy holds, as far as we know
+  let fullAt = 0
   let connect = null
   let connectAt = 0
   let timer = null
@@ -138,6 +175,7 @@ export function createMirrorPusher({ db, activity, chrome, gmail, orchestrator, 
     try {
       const snapshot = buildSnapshot(db)
       const hash = createHash('sha256').update(JSON.stringify(snapshot)).digest('hex')
+      const sendRecords = hash !== lastHash || Date.now() - fullAt > FULL_PUSH_MS
       const status = {
         state: orchestrator.state(),
         chrome: await chrome.status().catch(e => ({ running: false, attached: false, note: maskError(e) })),
@@ -147,13 +185,16 @@ export function createMirrorPusher({ db, activity, chrome, gmail, orchestrator, 
       const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ snapshot: hash === lastHash ? null : snapshot, status }),
+        body: JSON.stringify({ source, hash, snapshot: sendRecords ? snapshot : null, status }),
         signal: AbortSignal.timeout(20_000)
       })
-      if (!res.ok) throw new Error(`hosted copy answered HTTP ${res.status}`)
-      lastHash = hash
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error || `hosted copy answered HTTP ${res.status}`)
+      if (sendRecords) fullAt = Date.now()
+      // The hosted copy says which records it holds; if they are not ours, the next push sends ours again.
+      lastHash = 'have' in data ? data.have : hash
       if (failing) { failing = false; activity.success('mirror_online', 'Hosted dashboard is up to date again') }
-      const { commands = [] } = await res.json()
+      const { commands = [] } = data
       for (const c of commands) await run(c)
       if (commands.length) lastHash = null // what they changed goes up on the next push
     } catch (e) {
