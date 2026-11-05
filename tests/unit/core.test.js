@@ -209,7 +209,8 @@ test('mirror: hosted copy gets the Mac records without secrets, runs nothing its
   const count = t => hosted.db.prepare(`SELECT COUNT(*) n FROM ${t}`).get().n
   assert.deepEqual(hosted.db.prepare('SELECT domain FROM platforms').all().map(r => r.domain), ['m.io'])
   assert.equal(count('accounts'), 1)
-  assert.equal(count('credentials'), 0) // passwords never leave the Mac
+  assert.deepEqual(hosted.db.prepare('SELECT secret_enc FROM credentials').all(), [{ secret_enc: '' }]) // only that a password exists
+  assert.equal(JSON.stringify(buildSnapshot(mac.db)).includes('sealed-password'), false) // the sealed password never leaves the Mac
   assert.equal(hosted.db.prepare('SELECT link_enc FROM email_verifications').get().link_enc, null)
   assert.equal(count('automation_tasks'), 1)
   assert.equal(hosted.orchestrator.state(), 'stopped') // the hosted copy runs nothing of its own
@@ -228,4 +229,32 @@ test('mirror: hosted copy gets the Mac records without secrets, runs nothing its
   assert.equal(commandAllowed({ method: 'POST', path: '/api/login' }), false)
   assert.equal(commandAllowed({ method: 'GET', path: '/api/platforms' }), false)
   assert.equal(commandAllowed({ method: 'POST', path: 'https://evil.io/api/x' }), false)
+})
+
+test('mirror: one agent only, and a hosted copy that lost or never had the records gets them again', async () => {
+  const { buildSnapshot, createMirrorReceiver } = await import('../../src/sync/mirror.js')
+  const mac = setup(), other = setup(), hosted = setup()
+  mac.platforms.create({ name: 'Real', url: 'real.io' })
+  other.platforms.create({ name: 'Stray', url: 'stray.io' })
+  const receiver = createMirrorReceiver({ db: hosted.db, activity: hosted.activity, token: 't' })
+  const domains = () => hosted.db.prepare('SELECT domain FROM platforms').all().map(r => r.domain)
+
+  const a = receiver.receive({ source: { id: 'mac', host: 'mac' }, hash: 'h1', snapshot: buildSnapshot(mac.db) })
+  assert.equal(a.have, 'h1') // the Mac learns the hosted copy holds its records
+  // A second agent with the same token, while the Mac is online: refused, nothing changes.
+  const b = receiver.receive({ hash: 'h2', snapshot: buildSnapshot(other.db) })
+  assert.equal(b.conflict, true)
+  assert.deepEqual(domains(), ['real.io'])
+  assert.equal(receiver.receive({ source: { id: 'mac', host: 'mac' }, hash: 'h1' }).have, 'h1')
+
+  // The Mac goes offline for a while: another agent may take over, and the hosted copy then asks the Mac for a full copy.
+  hosted.db.prepare(`UPDATE system_settings SET value = ? WHERE key = 'mirror_last_push'`).run(new Date(Date.now() - 120_000).toISOString())
+  receiver.receive({ source: { id: 'other', host: 'other' }, hash: 'h2', snapshot: buildSnapshot(other.db) })
+  assert.deepEqual(domains(), ['stray.io'])
+  hosted.db.prepare(`UPDATE system_settings SET value = ? WHERE key = 'mirror_last_push'`).run(new Date(Date.now() - 120_000).toISOString())
+  const c = receiver.receive({ source: { id: 'mac', host: 'mac' }, hash: 'h1' }) // status only, as when unchanged
+  assert.equal(c.have, '') // not the Mac's hash: its next push carries the records
+  receiver.receive({ source: { id: 'mac', host: 'mac' }, hash: 'h1', snapshot: buildSnapshot(mac.db) })
+  assert.deepEqual(domains(), ['real.io'])
+  mac.restore(); other.restore(); hosted.restore()
 })
