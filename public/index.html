@@ -150,10 +150,13 @@
 
       <section id="view-activity" class="view" hidden>
         <div class="toolbar">
-          <select id="f-level"><option value="">All levels</option><option>info</option><option>success</option><option>warn</option><option>error</option></select>
+          <input id="f-aq" type="search" placeholder="Search messages">
+          <select id="f-aplatform"><option value="">All platforms</option></select>
+          <select id="f-level"><option value="">All levels</option><option value="info">Info</option><option value="success">Success</option><option value="warn">Warnings</option><option value="error">Errors</option></select>
+          <label class="check small"><input type="checkbox" id="f-group-runs" checked> Group by run</label>
           <span class="muted small" id="stream-state">connecting…</span>
         </div>
-        <div class="card"><ol id="activity" class="feed"></ol></div>
+        <div class="card"><ol id="activity" class="feed"></ol><div class="row"><button class="btn small" id="activity-more">Load older</button></div></div>
       </section>
 
       <section id="view-integrations" class="view" hidden>
@@ -215,6 +218,11 @@
       </section>
     </main>
   </div>
+
+  <aside id="drawer" class="drawer" hidden aria-label="Platform details">
+    <div class="drawer-head"><h2 id="drawer-title">Platform</h2><button class="btn ghost small" id="drawer-close">Close</button></div>
+    <div id="drawer-body" class="drawer-body"></div>
+  </aside>
 
   <dialog id="manual-dialog" class="dialog">
     <form method="dialog" id="manual-form" class="dialog-form">

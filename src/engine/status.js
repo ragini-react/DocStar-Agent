@@ -93,9 +93,10 @@ export function createStatus({ db, activity }) {
         const level = to === 'needs_you' || ['registration_failed', 'submission_failed', 'evaluation_failed', 'backlink_lost'].includes(to) ? 'warn'
           : ['live_backlink', 'published', 'submitted', 'qualified'].includes(to) ? 'success' : 'info'
         const by = { operator: ' (by you)', reconcile: ' (reconciled)', sweeper: ' (stale-state sweeper)', migration: ' (data repair)', platform: ' (by the platform)' }[actor] || ''
+        const correlationId = taskId ? db.prepare('SELECT correlation_id FROM automation_tasks WHERE id = ?').get(taskId)?.correlation_id ?? null : null
         activity[level](to === 'needs_you' ? 'needs_you' : 'platform_status',
           `${cur.name}: ${label(from)} → ${label(to)}${by}${reason || needsYou?.what ? ` — ${reason || needsYou.what}` : ''}`,
-          { platformId, taskId, meta: { from, to, actor, reason: statusReason || undefined } })
+          { platformId, taskId, correlationId, meta: { from, to, actor, reason: statusReason || undefined } })
       }
       result = { from, to, changed: !same, fixes, name: cur.name }
     })() }

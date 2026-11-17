@@ -5,6 +5,8 @@ const RULES = [
   [/([A-Za-z0-9._%+-]+)@([A-Za-z0-9.-]+\.[A-Za-z]{2,})/g, '<email>@$2'],
   // query strings and fragments of URLs carry tokens (verification links, OAuth callbacks)
   [/(https?:\/\/[^\s"'<>?#]+)[?#][^\s"'<>]*/g, '$1?<redacted>'],
+  // one-click action links carry a signed token in the path
+  [/(\/r\/)[A-Za-z0-9._-]{20,}/g, '$1<redacted>'],
   // bearer tokens, JWTs, key=value secrets
   [/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/gi, '$1 <redacted>'],
   [/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g, '<jwt>'],

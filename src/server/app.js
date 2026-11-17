@@ -4,6 +4,7 @@
 import express from 'express'
 import { randomBytes } from 'node:crypto'
 import path from 'node:path'
+import { existsSync } from 'node:fs'
 import { ROOT } from '../config/index.js'
 import { createAdminPassword } from '../security/adminPassword.js'
 import { safeEqual } from '../security/crypto.js'
@@ -16,12 +17,13 @@ import { toCsv } from '../platforms/service.js'
 import { resolveFinalUrl } from '../platforms/domains.js'
 import { actionPage, esc } from '../alerts/notify.js'
 
-const SESSION_MS = 12 * 3600_000
+const SESSION_MS = 12 * 3600_000 // absolute limit
+const IDLE_MS = 30 * 60_000 // signed out after 30 minutes without a request
 const COOKIE = 'docstar_session'
 
 export function createApp({ config, db, vault, activity, gmail, chrome, orchestrator, platforms, agent, status, views, maintenance, manual, alerts = null, tokens = null, reports = null, mirror = null, pusher = () => null }) {
   const app = express()
-  const sessions = new Map() // token -> expiresAt; in memory, so a restart signs everyone out
+  const sessions = new Map() // token -> { exp, seen }; in memory, so a restart signs everyone out
   const loginAttempts = new Map() // ip -> [timestamps]
   const allowedHosts = new Set([`localhost:${config.port}`, `127.0.0.1:${config.port}`, ...config.publicHosts])
   const secure = config.hosted ? '; Secure' : '' // hosted copies are served over HTTPS only
@@ -92,9 +94,10 @@ export function createApp({ config, db, vault, activity, gmail, chrome, orchestr
   const cookieOf = req => Object.fromEntries(String(req.headers.cookie || '').split(';').map(c => c.trim().split('=')).filter(([k]) => k))[COOKIE]
   const authed = req => {
     const t = cookieOf(req)
-    const exp = t && sessions.get(t)
-    if (!exp) return false
-    if (exp < Date.now()) { sessions.delete(t); return false }
+    const s = t && sessions.get(t)
+    if (!s) return false
+    if (s.exp < Date.now() || Date.now() - s.seen > IDLE_MS) { sessions.delete(t); return false }
+    s.seen = Date.now()
     return true
   }
   const admin = createAdminPassword({ config })
@@ -102,8 +105,10 @@ export function createApp({ config, db, vault, activity, gmail, chrome, orchestr
   const clientIp = req => (config.hosted ? String(req.headers['x-forwarded-for'] || '').split(',')[0].trim() : '') || req.socket.remoteAddress
   const throttle = req => {
     const ip = clientIp(req)
-    const recent = (loginAttempts.get(ip) || []).filter(t => Date.now() - t < 60_000)
-    if (recent.length >= 5) { const e = new Error('Too many attempts, wait a minute'); e.status = 429; throw e }
+    // 5 a minute; 10 in 15 minutes locks this address out for 15 minutes.
+    const recent = (loginAttempts.get(ip) || []).filter(t => Date.now() - t < 15 * 60_000)
+    if (recent.length >= 10) { const e = new Error('Too many attempts: sign-in is locked for 15 minutes'); e.status = 429; activity.warn('login_locked', 'Dashboard sign-in locked for 15 minutes after repeated attempts'); throw e }
+    if (recent.filter(t => Date.now() - t < 60_000).length >= 5) { const e = new Error('Too many attempts, wait a minute'); e.status = 429; throw e }
     recent.push(Date.now())
     loginAttempts.set(ip, recent)
   }
@@ -114,7 +119,7 @@ export function createApp({ config, db, vault, activity, gmail, chrome, orchestr
   }
   const startSession = res => {
     const token = randomBytes(32).toString('base64url')
-    sessions.set(token, Date.now() + SESSION_MS)
+    sessions.set(token, { exp: Date.now() + SESSION_MS, seen: Date.now() })
     res.set('Set-Cookie', `${COOKIE}=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${SESSION_MS / 1000}${secure}`)
   }
 
@@ -151,7 +156,7 @@ export function createApp({ config, db, vault, activity, gmail, chrome, orchestr
   // A one-minute internal session; the same checks and handlers as a click on the local dashboard.
   app.locals.replay = async ({ method, path: p, body }) => {
     const token = randomBytes(32).toString('base64url')
-    sessions.set(token, Date.now() + 60_000)
+    sessions.set(token, { exp: Date.now() + 60_000, seen: Date.now() })
     try {
       const res = await fetch(`http://127.0.0.1:${config.port}${p}`, {
         method,
@@ -381,7 +386,18 @@ export function createApp({ config, db, vault, activity, gmail, chrome, orchestr
   app.post('/api/tasks/:id/cancel', wrap(async (req, res) => res.json(orchestrator.cancelTask(Number(req.params.id)))))
 
   // Activity: history and a live stream
-  app.get('/api/activity', (req, res) => res.json(activity.recent(req.query.limit, { level: req.query.level })))
+  // Paginated on the server: newest first, `before` = the last id the page has.
+  app.get('/api/activity', (req, res) => res.json(activity.recent(req.query.limit, {
+    level: req.query.level, event: req.query.event, platformId: req.query.platform, taskId: req.query.task, q: req.query.q ? String(req.query.q).slice(0, 100) : null, before: req.query.before })))
+  app.get('/api/platform-names', (req, res) => res.json(db.prepare('SELECT id, name FROM platforms ORDER BY name COLLATE NOCASE').all()))
+  // A screenshot of a key step, only from the screenshots folder next to the database.
+  app.get('/api/screenshots/:id', (req, res) => {
+    const row = db.prepare('SELECT file FROM screenshots WHERE id = ?').get(Number(req.params.id))
+    const base = path.resolve(path.dirname(config.dbPath), 'screenshots')
+    const file = row && path.resolve(path.dirname(config.dbPath), row.file)
+    if (!file || !file.startsWith(base + path.sep) || !existsSync(file)) return res.status(404).json({ error: mirror?.on() ? 'Screenshots stay on the agent: open them in its local dashboard.' : 'No such screenshot' })
+    res.type('png').sendFile(file)
+  })
   app.get('/api/activity/stream', (req, res) => {
     res.set({ 'Content-Type': 'text/event-stream', Connection: 'keep-alive' })
     res.flushHeaders()

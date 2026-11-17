@@ -173,6 +173,21 @@ textarea { font: inherit; color: var(--text); background: var(--surface); border
 .timeline span.done { color: var(--ok); } .timeline span.todo { opacity: .55; }
 table.added td { vertical-align: top; }
 .summary { white-space: pre-wrap; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; max-height: 480px; overflow: auto; margin: 0; }
+.drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(560px, 100vw); background: var(--surface); border-left: 1px solid var(--border); box-shadow: -8px 0 32px rgba(0,0,0,.15); z-index: 30; display: flex; flex-direction: column; }
+.drawer-head { display: flex; justify-content: space-between; align-items: center; padding: 16px 20px; border-bottom: 1px solid var(--border); }
+.drawer-head h2 { margin: 0; }
+.drawer-body { overflow: auto; padding: 16px 20px 40px; display: grid; gap: 18px; }
+.drawer-body h3 { font-size: 13px; margin: 0 0 6px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.drawer-body .shots { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+.drawer-body .shots img { width: 100%; border: 1px solid var(--border); border-radius: 6px; }
+.tl { list-style: none; margin: 0; padding: 0; border-left: 2px solid var(--border); }
+.tl li { padding: 2px 0 8px 12px; position: relative; font-size: 13px; }
+.tl li::before { content: ''; position: absolute; left: -6px; top: 7px; width: 10px; height: 10px; border-radius: 50%; background: var(--accent); }
+.platform-link { cursor: pointer; text-decoration: underline dotted; }
+.feed details summary { cursor: pointer; list-style: none; }
+.feed details summary::-webkit-details-marker { display: none; }
+.feed .run { border-left: 3px solid var(--accent-soft); padding-left: 8px; }
+.feed .run ol { list-style: none; padding: 0; margin: 4px 0 0; }
 .kpi.link { cursor: pointer; } .kpi.link:hover { outline: 2px solid var(--accent-soft); }
 .reason { display: grid; gap: 2px; }
 .history { font-size: 12px; color: var(--muted); margin: 4px 0 0; padding-left: 16px; }

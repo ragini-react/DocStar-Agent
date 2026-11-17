@@ -128,6 +128,7 @@ $('#logout').addEventListener('click', run(async () => { await api('/api/logout'
 const TITLES = { overview: 'Overview', platforms: 'Platforms', queue: 'Needs you', added: 'Successfully added', failed: 'Failed', company: 'DocStar profile', activity: 'Activity',
   integrations: 'Integrations', credentials: 'Credentials', settings: 'Settings', health: 'Health' }
 const loaders = {}
+let pendingActivityPlatform = null
 const currentView = () => { const v = location.hash.slice(1).split('?')[0] || 'overview'; return TITLES[v] ? v : 'overview' }
 const hashParams = () => new URLSearchParams(location.hash.split('?')[1] || '')
 function route() {
@@ -135,6 +136,7 @@ function route() {
   for (const v of Object.keys(TITLES)) { const el = $(`#view-${v}`); if (el) el.hidden = v !== name }
   for (const a of $$('#nav a')) a.classList.toggle('active', a.dataset.view === name)
   $('#view-title').textContent = TITLES[name]
+  if (name === 'activity' && hashParams().get('platform')) { pendingActivityPlatform = hashParams().get('platform'); activityOldest = null }
   if (name === 'platforms') {
     const p = hashParams()
     $('#f-group').value = p.get('group') || ''
@@ -241,7 +243,7 @@ function reasonText(p) {
 function platformRow(p) {
   const why = reasonText(p)
   return `<tr data-id="${p.id}">
-    <td><strong>${esc(p.name)}</strong><div class="sub">${link(p.url, p.domain)} · ${esc(p.source)}</div></td>
+    <td><strong class="platform-link" data-drawer="${p.id}">${esc(p.name)}</strong><div class="sub">${link(p.url, p.domain)} · <span title="${esc(p.source)}">${esc(p.source.startsWith('discovery:') ? 'found by search' : label(p.source))}</span></div></td>
     <td>${esc(p.category_name || '—')}</td>
     <td>${p.quality_score ?? '—'}</td>
     <td>${esc(label(p.pricing))}</td>
@@ -381,7 +383,7 @@ function needsYouItem(t) {
       <div class="small"><b>What happened:</b> ${esc(t.reason)}</div>
       <div class="small"><b>What to do:</b> ${esc(t.todo)}</div>
       ${t.where ? `<div class="small">Where: ${link(t.where)}${hosted ? '' : ' <button class="btn small" data-open-here>Open it in the agent\'s Chrome</button>'}</div>` : ''}
-      <div class="muted small">Stopped ${ago(t.status_changed_at)}${t.resumesAt ? ` · Resume continues at: ${esc(t.resumesAt)}` : ''}</div>
+      <div class="muted small"><span class="platform-link" data-drawer="${t.platform_id}">details</span> · Stopped ${ago(t.status_changed_at)}${t.resumesAt ? ` · Resume continues at: ${esc(t.resumesAt)}` : ''}</div>
       ${t.error_history?.length ? `<details><summary class="small">Error history (${t.error_history.length})</summary><ol class="history">${t.error_history.map(h => `<li>${fmtTime(h.at)} · attempt ${h.attempt ?? '?'}${h.step ? ` · ${esc(h.step)}` : ''}: ${esc(h.error)}</li>`).join('')}</ol></details>` : ''}</div>
     <div class="row"><button class="btn primary" data-act="resume">Resume</button><button class="btn" data-act="manual">Mark as done…</button><button class="btn danger-ghost" data-act="rejected">Reject…</button></div></div>`
 }
@@ -444,7 +446,7 @@ const timeline = t => `<div class="timeline">${t.map(m => `<span class="${m.at ?
 const who = r => `${r.account_email ? esc(r.account_email) : '—'}${r.login_method ? `<div class="sub">${esc(label(r.login_method))}</div>` : ''}${r.manual ? '<div class="sub">recorded by a person</div>' : ''}`
 loaders.added = async () => {
   const a = await api('/api/added')
-  const name = r => `<strong>${esc(r.name)}</strong><div class="sub">${esc(r.domain)}</div>${timeline(r.timeline)}`
+  const name = r => `<strong class="platform-link" data-drawer="${r.platform_id}">${esc(r.name)}</strong><div class="sub">${esc(r.domain)}</div>${timeline(r.timeline)}`
   $('#added-live-n').textContent = a.live.length
   $('#added-pub-n').textContent = a.published.length
   $('#added-wait-n').textContent = a.awaiting.length
@@ -528,15 +530,102 @@ $('#company-draft').addEventListener('click', e => {
 
 // ---------- activity ----------
 function feedItem(e) {
-  return `<li><span class="ts">${fmtTime(e.ts)}</span><span class="lvl ${esc(e.level)}" title="${esc(e.level)}"></span><span>${esc(e.message)}<span class="ev">${esc(e.event)}</span></span></li>`
+  return `<li data-id="${e.id ?? ''}"><span class="ts">${fmtTime(e.ts)}</span><span class="lvl ${esc(e.level)}" title="${esc(e.level)}"></span><span>${esc(e.message)}<span class="ev">${esc(e.event)}</span>${e.platformId ? ` <span class="platform-link small" data-drawer="${e.platformId}">details</span>` : ''}</span></li>`
 }
 function renderFeed(el, entries) { el.innerHTML = entries.length ? entries.map(feedItem).join('') : '<li class="muted">No activity yet.</li>' }
-loaders.activity = async () => {
-  const level = $('#f-level').value
-  renderFeed($('#activity'), await api(`/api/activity?limit=50${level ? `&level=${level}` : ''}`))
+// Grouped by run: a task's step-by-step entries collapse under one line (its first entry), newest run first.
+function groupRuns(entries) {
+  const out = []
+  const byRun = new Map()
+  for (const e of entries) {
+    if (!e.correlationId) { out.push({ single: e }); continue }
+    let g = byRun.get(e.correlationId)
+    if (!g) { g = { run: e.correlationId, items: [] }; byRun.set(e.correlationId, g); out.push(g) }
+    g.items.push(e)
+  }
+  return out
 }
-$('#f-level').addEventListener('change', run(loaders.activity))
+function renderGroup(g) {
+  if (g.single) return feedItem(g.single)
+  const head = g.items[0]
+  const worst = g.items.some(i => i.level === 'error') ? 'error' : g.items.some(i => i.level === 'warn') ? 'warn' : head.level
+  return `<li class="run" data-run="${esc(g.run)}"><details><summary><span class="ts">${fmtTime(head.ts)}</span><span class="lvl ${esc(worst)}"></span>
+    <span><b>${esc(head.platform || 'Run')}</b> · ${g.items.length} step(s) · ${esc(head.message)}</span></summary><ol>${g.items.map(feedItem).join('')}</ol></details></li>`
+}
+let activityOldest = null
+let platformNamesLoaded = false
+function activityQuery() {
+  const qs = new URLSearchParams({ limit: 100 })
+  if ($('#f-level').value) qs.set('level', $('#f-level').value)
+  if ($('#f-aplatform').value) qs.set('platform', $('#f-aplatform').value)
+  if ($('#f-aq').value.trim()) qs.set('q', $('#f-aq').value.trim())
+  return qs
+}
+loaders.activity = async ({ more = false } = {}) => {
+  if (!platformNamesLoaded) {
+    $('#f-aplatform').insertAdjacentHTML('beforeend', (await api('/api/platform-names')).map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join(''))
+    platformNamesLoaded = true
+  }
+  if (pendingActivityPlatform) { $('#f-aplatform').value = pendingActivityPlatform; pendingActivityPlatform = null }
+  const qs = activityQuery()
+  if (more && activityOldest) qs.set('before', activityOldest)
+  const rows = await api(`/api/activity?${qs}`)
+  if (rows.length) activityOldest = rows.at(-1).id
+  $('#activity-more').hidden = rows.length < 100
+  const html = $('#f-group-runs').checked ? groupRuns(rows).map(renderGroup).join('') : rows.map(feedItem).join('')
+  if (more) $('#activity').insertAdjacentHTML('beforeend', html)
+  else $('#activity').innerHTML = html || '<li class="muted">No activity matches.</li>'
+}
+for (const id of ['#f-level', '#f-aplatform', '#f-group-runs']) $(id).addEventListener('change', () => { activityOldest = null; run(loaders.activity)() })
+let aqTimer
+$('#f-aq').addEventListener('input', () => { clearTimeout(aqTimer); aqTimer = setTimeout(() => { activityOldest = null; run(loaders.activity)() }, 300) })
+$('#activity-more').addEventListener('click', run(() => loaders.activity({ more: true })))
+
+// ---------- platform drawer: everything about one platform ----------
+async function openDrawer(id) {
+  const p = await api(`/api/platforms/${id}`)
+  $('#drawer-title').textContent = p.name
+  const kv = rows => `<dl class="details">${rows.filter(([, v]) => v != null && v !== '').map(([k, v]) => `<dt>${esc(k)}</dt><dd>${v}</dd>`).join('')}</dl>`
+  const ny = p.needsYou
+  const l = p.listing || {}
+  $('#drawer-body').innerHTML = `
+    <section>${kv([['Status', `<span class="pill ${STATUS_TONE[p.status] ?? ''}">${esc(label(p.status))}</span>${p.status_reason ? ` · ${esc(label(p.status_reason))}` : ''}`],
+      ['Site', link(p.url, p.domain)], ['Found by', esc(p.source)], ['Score', p.quality_score ?? '—'], ['Pricing', esc(label(p.pricing))], ['Category', esc(p.category_name || '—')],
+      ['Resumes at', p.resume_status ? esc(label(p.resume_status)) : null], ['Notes', p.notes ? esc(p.notes) : null]])}
+      ${ny ? `<div class="banner warn"><b>Needs you:</b> ${esc(ny.what)}<br>${esc(ny.todo || '')}</div>` : ''}
+      ${p.contradictions?.length ? `<div class="banner warn">Inconsistent: ${esc(p.contradictions.join('; '))}</div>` : ''}
+      <div class="row">${actionsFor(p).filter(([a]) => !['delete'].includes(a)).map(([a, t]) => `<button class="btn small" data-act="${a}">${esc(t.replace('…', ''))}</button>`).join('')}</div></section>
+    <section><h3>Timeline</h3><ol class="tl">${p.timeline.map(t => `<li>${fmtTime(t.at)} · <b>${esc(label(t.to_status))}</b>${t.from_status ? ` <span class="muted">from ${esc(label(t.from_status))}</span>` : ''} <span class="muted">(${esc(t.actor)})</span>${t.reason ? `<div class="muted small">${esc(t.reason)}</div>` : ''}</li>`).join('') || '<li class="muted">No history.</li>'}</ol></section>
+    <section><h3>Account</h3>${p.account ? kv([['Email', esc(p.account.email)], ['Signed up with', esc(label(p.account.login_method))], ['Status', esc(label(p.account.status))],
+      ['Sign-up finished', p.account.signup_completed_at ? `${fmtTime(p.account.signup_completed_at)}${p.account.signup_inferred ? ' (inferred)' : ''}` : 'not yet'], ['Started', fmtTime(p.account.created_at)]]) : '<p class="muted">No account.</p>'}</section>
+    <section><h3>Listing submitted</h3>${p.listing ? kv([['Title', esc(l.title)], ['Tagline', esc(l.tagline)], ['Short description', esc(l.short_description)], ['Tags', esc((l.tags || []).join(', '))],
+      ['Anchor text', esc(l.anchor_text)], ['Submission status', esc(label(p.submission_status))], ['Listing', link(p.listing_url)], ['Added by', p.manual_submission ? 'a person' : 'the agent']]) : '<p class="muted">No listing drafted.</p>'}</section>
+    <section><h3>Backlink checks</h3>${p.backlinkHistory.length ? `<ol class="history">${p.backlinkHistory.map(h => `<li>${fmtTime(h.checked_at)} · HTTP ${h.http_status ?? '—'} · ${h.link_present ? `link ${esc(h.rel || 'dofollow')}${h.anchor_text ? ` "${esc(h.anchor_text)}"` : ''}` : 'no link'}${h.indexable === 0 ? ' · noindex' : ''}${h.note ? ` · ${esc(h.note)}` : ''}</li>`).join('')}</ol>` : '<p class="muted">Not checked yet.</p>'}</section>
+    <section><h3>Emails used</h3>${p.emails.length ? `<ol class="history">${p.emails.map(e => `<li>${fmtTime(e.received_at)} · ${esc(e.sender)} · "${esc(e.subject)}" · ${esc(e.purpose)}</li>`).join('')}</ol>` : '<p class="muted">None.</p>'}</section>
+    <section><h3>Screenshots of key steps</h3>${p.screenshots.length ? `<div class="shots">${p.screenshots.map(s => `<a href="/api/screenshots/${s.id}" target="_blank" rel="noopener"><img src="/api/screenshots/${s.id}" alt="${esc(s.step)}" loading="lazy"></a><div class="muted small">${esc(s.step)} · ${fmtTime(s.at)}${s.note ? ` · ${esc(s.note)}` : ''}</div>`).join('')}</div>` : '<p class="muted">None.</p>'}</section>
+    <section><h3>Tasks</h3><ol class="history">${p.tasks.map(t => `<li>#${t.id} ${esc(label(t.type))} · ${esc(label(t.state))} · ${t.attempts} attempt(s)${t.step ? ` · ${esc(t.step)}` : ''}${t.last_error ? `<div class="small">${esc(t.last_error)}</div>` : ''}</li>`).join('') || '<li class="muted">None.</li>'}</ol></section>
+    ${p.playbook ? `<section><h3>What works here (playbook)</h3>${kv([['Sign-in', esc(p.playbook.signinMethod || '—')], ['Form', link(p.playbook.submitUrl)], ['Required fields', esc((p.playbook.requiredFields || []).join(', '))],
+      ['Gotchas', esc((p.playbook.gotchas || []).join(' | '))], ['Last run', esc(p.playbook.lastOutcome || '—')]])}</section>` : ''}
+    <section><a class="btn small" href="#activity?platform=${p.id}" data-close>All activity for ${esc(p.name)}</a></section>`
+  $('#drawer').hidden = false
+  $('#drawer').dataset.id = id
+  $('#drawer').dataset.name = p.name
+}
+document.addEventListener('click', e => {
+  const d = e.target.closest('[data-drawer]')
+  if (d) { e.preventDefault(); run(openDrawer)(d.dataset.drawer) }
+  if (e.target.closest('[data-close]')) $('#drawer').hidden = true
+})
+$('#drawer-close').addEventListener('click', () => { $('#drawer').hidden = true })
+document.addEventListener('keydown', e => { if (e.key === 'Escape') $('#drawer').hidden = true })
+$('#drawer-body').addEventListener('click', run(async e => {
+  const a = e.target.closest('[data-act]')?.dataset.act
+  if (!a) return
+  await platformAction($('#drawer').dataset.id, a, e.target, $('#drawer').dataset.name)
+  setTimeout(() => run(openDrawer)($('#drawer').dataset.id), 600)
+}))
 let stream
+let drawerTimer
 function openStream() {
   stream?.close()
   stream = new EventSource('/api/activity/stream')
@@ -545,11 +634,16 @@ function openStream() {
   stream.onmessage = m => {
     const e = JSON.parse(m.data)
     const level = $('#f-level').value
-    if (currentView() === 'activity' && (!level || level === e.level)) {
+    const pf = $('#f-aplatform').value
+    if (currentView() === 'activity' && (!level || level === e.level) && (!pf || String(e.platformId) === pf) && !$('#f-aq').value.trim()) {
       const list = $('#activity')
       if (list.firstElementChild?.classList.contains('muted')) list.innerHTML = ''
-      list.insertAdjacentHTML('afterbegin', feedItem(e))
+      // A step of a run already shown goes inside that run; anything else on top.
+      const runEl = e.correlationId && $('#f-group-runs').checked ? list.querySelector(`[data-run="${CSS.escape(e.correlationId)}"] ol`) : null
+      if (runEl) runEl.insertAdjacentHTML('beforeend', feedItem(e))
+      else list.insertAdjacentHTML('afterbegin', $('#f-group-runs').checked && e.correlationId ? renderGroup({ run: e.correlationId, items: [e] }) : feedItem(e))
     }
+    if (!$('#drawer').hidden && String(e.platformId) === $('#drawer').dataset.id && REFRESH.test(e.event)) { clearTimeout(drawerTimer); drawerTimer = setTimeout(() => run(openDrawer)($('#drawer').dataset.id), 800) }
     if (REFRESH.test(e.event)) scheduleRefresh(e.platformId ?? 'all')
     else if (/automation_|gmail_|chrome_|worker_|mirror_/.test(e.event)) refreshStatus()
   }
