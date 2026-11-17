@@ -1,12 +1,12 @@
 // DocStar dashboard. Plain ES module, no build step. Every value from the server is escaped before it
 // reaches the page: platform names and URLs will come from the open web.
 import { connect, loadConnectScript } from '/vendor/viasocket-browser.js'
+import { STATUSES, label } from '/labels.js'
 
 const $ = (sel, root = document) => root.querySelector(sel)
 let hosted = false // set from /api/session: a hosted copy has no Chrome
 let mirrorOn = false // hosted and mirroring the Mac: Chrome and Gmail are the Mac's, reached through it
 const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c])
-const label = s => String(s ?? '').replace(/_/g, ' ')
 const fmtTime = ts => (ts ? new Date(ts).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—')
 const safeHref = u => (/^https?:\/\//i.test(String(u || '')) ? esc(u) : '#')
 
@@ -104,9 +104,8 @@ loaders.overview = async () => {
 }
 
 // ---------- platforms ----------
-const STATUSES = ['discovered', 'qualified', 'approval_required', 'registration_pending', 'registered', 'email_verification_pending',
-  'ready_for_submission', 'submitted', 'pending_approval', 'live_backlink', 'no_backlink', 'failed', 'paid_skipped', 'needs_you', 'rejected']
-const STATUS_TONE = { live_backlink: 'ok', registered: 'info', submitted: 'info', pending_approval: 'warn', approval_required: 'warn', needs_you: 'err', failed: 'err', paid_skipped: '', rejected: '' }
+const STATUS_TONE = { live_backlink: 'ok', published: 'ok', registered: 'info', submitted: 'info', pending_platform_review: 'info', approval_required: 'warn', needs_you: 'err',
+  evaluation_failed: 'err', registration_failed: 'err', submission_failed: 'err', backlink_lost: 'err', no_backlink: 'warn', paid_skipped: '', rejected: '', blocked: 'warn' }
 $('#f-status').insertAdjacentHTML('beforeend', STATUSES.map(s => `<option value="${s}">${label(s)}</option>`).join(''))
 let categoriesLoaded = false
 
@@ -120,17 +119,17 @@ loaders.platforms = async () => {
   }
   const qs = new URLSearchParams()
   for (const [id, key] of [['#f-q', 'q'], ['#f-status', 'status'], ['#f-category', 'category'], ['#f-pricing', 'pricing']]) if ($(id).value) qs.set(key, $(id).value)
-  const rows = await api(`/api/platforms?${qs}`)
-  $('#platforms-empty').hidden = rows.length > 0
+  const { rows, total } = await api(`/api/platforms?${qs}`)
+  $('#platforms-empty').hidden = total > 0
   $('#platforms-table tbody').innerHTML = rows.map(p => `<tr data-id="${p.id}">
     <td><strong>${esc(p.name)}</strong><div class="sub"><a href="${safeHref(p.url)}" target="_blank" rel="noopener noreferrer">${esc(p.domain)}</a> · ${esc(p.source)}</div></td>
     <td>${esc(p.category_name || '—')}</td>
     <td>${p.quality_score ?? '—'}</td>
     <td>${esc(p.pricing)}</td>
     <td><span class="pill ${STATUS_TONE[p.status] ?? ''}">${esc(label(p.status))}</span></td>
-    <td>${p.account_email ? `${esc(p.account_email)}<div class="sub">${esc(p.account_status)}</div>` : '—'}</td>
+    <td>${p.account_email ? `${esc(p.account_email)}<div class="sub">${esc(label(p.account_status))}</div>` : '—'}</td>
     <td>${p.listing_submission_url ? `<a href="${safeHref(p.listing_submission_url)}" target="_blank" rel="noopener noreferrer">open</a><div class="sub">${esc(label(p.submission_status))}</div>` : esc(label(p.submission_status) || '—')}</td>
-    <td>${p.backlink_url ? `<a href="${safeHref(p.backlink_url)}" target="_blank" rel="noopener noreferrer">open</a><div class="sub">${esc(p.backlink_status)}${p.is_dofollow === 1 ? ' · dofollow' : p.is_dofollow === 0 ? ' · nofollow' : ''}</div>` : '—'}</td>
+    <td>${p.backlink_url ? `<a href="${safeHref(p.backlink_url)}" target="_blank" rel="noopener noreferrer">open</a><div class="sub">${esc(label(p.backlink_status))}${p.is_dofollow === 1 ? ' · dofollow' : p.is_dofollow === 0 ? ' · nofollow' : ''}</div>` : '—'}</td>
     <td>${fmtTime(p.last_checked_at)}</td>
     <td><select class="row-action" aria-label="Actions for ${esc(p.name)}">
       <option value="">Actions</option>
@@ -197,17 +196,18 @@ $('#btn-seeds').addEventListener('click', run(async () => {
 
 // ---------- needs you ----------
 loaders.queue = async () => {
-  const [approvals, tasks, queued] = await Promise.all([api('/api/approvals'), api('/api/tasks?state=needs_you'), hosted ? api('/api/tasks?state=queued') : []])
-  const waiting = queued.filter(t => t.type === 'submit')
-  $('#browser-queue-card').hidden = !hosted
-  $('#browser-queue').innerHTML = waiting.length
-    ? waiting.map(t => `<div class="list-item"><div><strong>${esc(t.platform)}</strong><div class="muted small">approved ${fmtTime(t.updated_at)}</div></div></div>`).join('')
+  const [approvals, items, pipeline] = await Promise.all([api('/api/approvals'), api('/api/needs-you'), api('/api/pipeline')])
+  $('#browser-queue-card').hidden = false
+  $('#browser-queue').innerHTML = pipeline.length
+    ? pipeline.map(t => `<div class="list-item"><div><strong>${esc(t.name)}</strong> <span class="pill info">${esc(t.step)}</span><div class="muted small">approved ${fmtTime(t.approved_at)}${t.run_after ? ` · next try ${fmtTime(t.run_after)}` : ''}</div></div></div>`).join('')
     : '<p class="muted">None waiting.</p>'
   $('#approvals').innerHTML = approvals.length ? approvals.map(approvalCard).join('') : '<p class="muted">Nothing waiting for your approval.</p>'
-  $('#needs-you').innerHTML = tasks.length
-    ? tasks.map(t => `<div class="list-item" data-task="${t.id}"><div><strong>${esc(t.platform || 'Task')}</strong> · ${esc(t.type)}<div class="muted small">${esc(t.last_error || '')}</div></div>
+  $('#needs-you').innerHTML = items.length
+    ? items.map(t => `<div class="list-item" data-platform="${t.platform_id}"><div><strong>${esc(t.name)}</strong>${t.resumesAt ? ` <span class="muted small">resumes at ${esc(t.resumesAt)}</span>` : ''}
+        <div class="small"><b>What happened:</b> ${esc(t.reason)}</div><div class="small"><b>What to do:</b> ${esc(t.todo)}</div>
+        ${t.where ? `<div class="small muted">Where: <a href="${safeHref(t.where)}" target="_blank" rel="noopener noreferrer">${esc(t.where)}</a></div>` : ''}</div>
         <div class="row"><button class="btn" data-open-chrome>Open browser</button><button class="btn primary" data-resume>Resume</button></div></div>`).join('')
-    : '<p class="muted">No task is waiting for you.</p>'
+    : '<p class="muted">Nothing is waiting for you.</p>'
 }
 function approvalCard(a) {
   const l = a.listing || {}
@@ -238,7 +238,7 @@ $('#approvals').addEventListener('click', run(async e => {
 $('#needs-you').addEventListener('click', run(async e => {
   if (e.target.matches('[data-open-chrome]')) { await api('/api/chrome/front', { method: 'POST' }); return }
   if (e.target.matches('[data-resume]')) {
-    await api(`/api/tasks/${e.target.closest('[data-task]').dataset.task}/resume`, { method: 'POST' })
+    await api(`/api/platforms/${e.target.closest('[data-platform]').dataset.platform}/resume`, { method: 'POST' })
     toast('Handed back to the agent')
     await loaders.queue(); refreshStatus()
   }
@@ -435,7 +435,7 @@ async function refreshStatus() {
     const [o, g, c, ov] = await Promise.all([api('/api/automation'), api('/api/gmail/status'), hosted && !mirrorOn ? {} : api('/api/chrome/status').catch(() => ({})), api('/api/overview')])
     $('#badge-company').hidden = Boolean(ov.companyApproved)
     renderAutomation(o.state)
-    const n = (o.tasks.needs_you || 0) + (ov.awaitingYou || 0)
+    const n = (ov.needsYou || 0) + (ov.awaitingYou || 0)
     $('#badge-queue').hidden = !n; $('#badge-queue').textContent = n
     setDot('#dot-gmail', g.connected && !g.expired ? 'ok' : g.connected ? 'warn' : '')
     setDot('#dot-chrome', c.attached ? (c.googleSignedIn ? 'ok' : 'warn') : '')

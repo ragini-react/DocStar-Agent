@@ -9,11 +9,14 @@ import { createAdminPassword } from '../security/adminPassword.js'
 import { safeEqual } from '../security/crypto.js'
 import { maskError } from '../security/mask.js'
 import { getSetting, now, setSetting } from '../db/index.js'
+import { label, LABELS, OTHER_LABELS, STATUSES } from '../engine/stateMachine.js'
+import { parseNeedsYou } from '../engine/status.js'
+import { signupSlot } from '../engine/rateLimit.js'
 
 const SESSION_MS = 12 * 3600_000
 const COOKIE = 'docstar_session'
 
-export function createApp({ config, db, vault, activity, gmail, chrome, orchestrator, platforms, agent, mirror = null }) {
+export function createApp({ config, db, vault, activity, gmail, chrome, orchestrator, platforms, agent, status, views, maintenance, mirror = null }) {
   const app = express()
   const sessions = new Map() // token -> expiresAt; in memory, so a restart signs everyone out
   const loginAttempts = new Map() // ip -> [timestamps]
@@ -177,7 +180,8 @@ export function createApp({ config, db, vault, activity, gmail, chrome, orchestr
 
   // Overview and automation
   app.get('/api/overview', wrap(async (req, res) => {
-    res.json({ ...platforms.overview(), automation: runState(), tasks: orchestrator.counts(), signupsLastHour: orchestrator.signupsInLastHour(),
+    const slot = signupSlot(db)
+    res.json({ ...views.overview(), automation: runState(), tasks: orchestrator.counts(), signupsLastHour: slot.usedHour, signupsToday: slot.usedDay,
       companyApproved: Boolean(agent.company.approved()) })
   }))
   app.get('/api/automation', (req, res) => res.json({ state: orchestrator.state(), tasks: orchestrator.counts(), workerId: orchestrator.workerId }))
@@ -191,8 +195,24 @@ export function createApp({ config, db, vault, activity, gmail, chrome, orchestr
   app.get('/api/categories', (req, res) => res.json(platforms.categories()))
   app.get('/api/platforms', (req, res) => res.json(platforms.list(req.query)))
   app.get('/api/platforms/:id', (req, res) => {
-    const p = platforms.get(Number(req.params.id))
-    return p ? res.json(p) : res.status(404).json({ error: 'No such platform' })
+    const id = Number(req.params.id)
+    const p = platforms.get(id)
+    if (!p) return res.status(404).json({ error: 'No such platform' })
+    res.json({
+      ...p,
+      needsYou: parseNeedsYou(p.needs_you_reason),
+      timeline: status.timeline(id),
+      tasks: db.prepare(`SELECT id, type, state, step, attempts, last_error, error_history, run_after, wait_for, created_at, updated_at FROM automation_tasks WHERE platform_id = ? ORDER BY id DESC LIMIT 20`).all(id),
+      scores: db.prepare(`SELECT overall, relevance, domain_reputation, audience_quality, credibility, backlink_quality, method, reason, scored_at FROM platform_scores WHERE platform_id = ? ORDER BY scored_at DESC, id DESC LIMIT 10`).all(id),
+      listing: agent.listings.get(id),
+      account: db.prepare(`SELECT email, login_method, status, signup_completed_at, signup_inferred, created_at FROM accounts WHERE platform_id = ?`).get(id) ?? null,
+      backlinkHistory: db.prepare(`SELECT h.checked_at, h.http_status, h.link_present, h.rel, h.anchor_text, h.indexable, h.note FROM backlink_history h
+        JOIN backlinks b ON b.id = h.backlink_id JOIN submissions s ON s.id = b.submission_id WHERE s.platform_id = ? ORDER BY h.checked_at DESC LIMIT 20`).all(id),
+      emails: db.prepare(`SELECT sender, subject, received_at, purpose FROM emails_used WHERE platform_id = ? ORDER BY at DESC LIMIT 20`).all(id),
+      screenshots: db.prepare(`SELECT id, step, note, at FROM screenshots WHERE platform_id = ? ORDER BY at DESC LIMIT 12`).all(id),
+      playbook: JSON.parse(db.prepare(`SELECT data FROM platform_playbooks WHERE platform_id = ?`).get(id)?.data || 'null'),
+      contradictions: status.contradictions(id)[0]?.problems || []
+    })
   })
   app.post('/api/platforms', wrap(async (req, res) => {
     const r = platforms.create({ name: req.body?.name, url: req.body?.url, category: req.body?.category, notes: req.body?.notes })
@@ -233,19 +253,35 @@ export function createApp({ config, db, vault, activity, gmail, chrome, orchestr
   app.post('/api/discovery/run', wrap(async (req, res) => res.json({ queued: agent.queueDiscovery(true) })))
   app.post('/api/platforms/:id/qualify', wrap(async (req, res) => {
     const id = Number(req.params.id)
-    db.prepare(`UPDATE platforms SET status = 'discovered', updated_at = ? WHERE id = ? AND status IN ('failed','discovered','rejected')`).run(now(), id)
-    // Re-evaluating on request: the earlier evaluation stops counting as the one finished qualify task.
-    db.prepare(`UPDATE automation_tasks SET state = 'cancelled', updated_at = ? WHERE platform_id = ? AND type = 'qualify' AND state IN ('done','failed')`).run(now(), id)
+    const p = status.get(id)
+    if (!p) return res.status(404).json({ error: 'No such platform' })
+    if (!['discovered', 'rejected', 'paid_skipped', 'evaluation_failed'].includes(p.status)) return res.status(409).json({ error: `${p.name} is ${label(p.status).toLowerCase()}; only discovered, rejected, skipped or failed evaluations are re-evaluated` })
+    db.transaction(() => {
+      if (p.status !== 'discovered') status.transition(id, 'discovered', { actor: 'operator', operator: true, reason: 're-evaluation requested' })
+      // Re-evaluating on request: the earlier evaluation stops counting as the one finished qualify task.
+      db.prepare(`UPDATE automation_tasks SET state = 'cancelled', updated_at = ? WHERE platform_id = ? AND type = 'qualify' AND state IN ('done','failed')`).run(now(), id)
+    })()
     res.json(orchestrator.enqueue(id, 'qualify'))
   }))
-  app.post('/api/platforms/:id/retry', wrap(async (req, res) => {
+  app.post('/api/platforms/:id/retry', wrap(async (req, res) => res.json(orchestrator.retryPlatform(Number(req.params.id)))))
+  app.post('/api/platforms/:id/resume', wrap(async (req, res) => res.json(orchestrator.resumePlatform(Number(req.params.id)))))
+  app.post('/api/platforms/:id/needs-you', wrap(async (req, res) => {
     const id = Number(req.params.id)
-    // Finished work is never redone: a listing already submitted or live is not submitted a second time.
-    const done = db.prepare(`SELECT 1 FROM platforms p LEFT JOIN submissions s ON s.platform_id = p.id
-      WHERE p.id = ? AND (p.status IN ('submitted','live_backlink','pending_approval') OR s.status IN ('submitted','published','pending_approval'))`).get(id)
-    if (done) return res.status(409).json({ error: 'This platform already has a submitted listing; it is not submitted again.' })
-    res.json(orchestrator.enqueue(id, 'submit'))
+    const p = status.get(id)
+    if (!p) return res.status(404).json({ error: 'No such platform' })
+    orchestrator.cancelPlatformTasks(id, 'handed to you')
+    status.transition(id, 'needs_you', { actor: 'operator', needsYou: { what: String(req.body?.note || `Marked as needing you (was ${label(p.status).toLowerCase()})`).slice(0, 500), todo: 'Finish the step by hand, then press Resume, or Mark as done manually.' } })
+    res.json({ ok: true })
   }))
+  app.post('/api/platforms/:id/reject', wrap(async (req, res) => {
+    res.json(platforms.update(Number(req.params.id), { status: 'rejected', note: req.body?.note || null, reason: 'operator' }))
+  }))
+  app.get('/api/needs-you', (req, res) => res.json(views.needsYou()))
+  app.get('/api/failed', (req, res) => res.json(views.failed()))
+  app.get('/api/pipeline', (req, res) => res.json(views.approvedPipeline()))
+  app.get('/api/invariants', (req, res) => res.json(maintenance ? maintenance.invariants() : []))
+  app.post('/api/maintenance/reconcile', wrap(async (req, res) => res.json({ fixes: maintenance.reconcile() })))
+  app.post('/api/maintenance/sweep', wrap(async (req, res) => res.json(maintenance.sweep())))
   app.post('/api/platforms/:id/listing-url', wrap(async (req, res) => {
     agent.backlinks.setListingUrl(Number(req.params.id), String(req.body?.url || ''))
     res.json({ ok: true })
@@ -259,7 +295,8 @@ export function createApp({ config, db, vault, activity, gmail, chrome, orchestr
   app.get('/api/tasks', (req, res) => res.json(db.prepare(`SELECT t.id, t.type, t.state, t.step, t.attempts, t.last_error, t.updated_at, p.name platform
     FROM automation_tasks t LEFT JOIN platforms p ON p.id = t.platform_id ${req.query.state ? 'WHERE t.state = ?' : ''} ORDER BY t.updated_at DESC LIMIT 200`)
     .all(...(req.query.state ? [req.query.state] : []))))
-  app.post('/api/tasks/:id/resume', wrap(async (req, res) => { orchestrator.resumeTask(Number(req.params.id)); res.json({ ok: true }) }))
+  app.post('/api/tasks/:id/resume', wrap(async (req, res) => res.json(orchestrator.resumeTask(Number(req.params.id)))))
+  app.post('/api/tasks/:id/cancel', wrap(async (req, res) => res.json(orchestrator.cancelTask(Number(req.params.id)))))
 
   // Activity: history and a live stream
   app.get('/api/activity', (req, res) => res.json(activity.recent(req.query.limit, { level: req.query.level })))
@@ -347,6 +384,10 @@ export function createApp({ config, db, vault, activity, gmail, chrome, orchestr
   // The browser half of viaSocket Connect, served from the installed package.
   app.get('/vendor/viasocket-browser.js', (req, res) =>
     res.type('application/javascript').sendFile(path.join(ROOT, 'node_modules/viasocket-apps/dist/esm/browser.js')))
+  // The state machine's statuses and labels, as a module the dashboard imports: one list for server and page.
+  app.get('/labels.js', (req, res) => res.type('application/javascript').send(
+    `export const STATUSES = ${JSON.stringify(STATUSES)};\nexport const LABELS = ${JSON.stringify({ ...OTHER_LABELS, ...LABELS })};\n` +
+    `export const GROUPS = ${JSON.stringify(platforms.GROUPS)};\nexport const label = s => LABELS[s] ?? String(s ?? '').replace(/_/g, ' ');\n`))
   app.use(express.static(path.join(ROOT, 'public'), { index: 'index.html' }))
 
   // Errors: masked message to the client and the log, never a stack or a secret.

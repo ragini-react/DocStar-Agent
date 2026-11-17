@@ -2,22 +2,11 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { randomBytes } from 'node:crypto'
-import { openDb } from '../../src/db/index.js'
 import { createVault, generatePassword } from '../../src/security/crypto.js'
 import { maskText, maskValue } from '../../src/security/mask.js'
-import { createActivityLog } from '../../src/logging/activity.js'
-import { createOrchestrator } from '../../src/engine/orchestrator.js'
-import { createPlatforms, csvCell, normalizeUrl } from '../../src/platforms/service.js'
+import { csvCell, normalizeUrl } from '../../src/platforms/service.js'
 import { pickVerificationLink, senderDomain } from '../../src/integrations/verificationLinks.js'
-
-const quiet = () => { const log = console.log; console.log = () => {}; return () => (console.log = log) }
-function setup() {
-  const db = openDb(':memory:')
-  const restore = quiet()
-  const activity = createActivityLog(db)
-  const chrome = { connect: async () => {} }
-  return { db, activity, orchestrator: createOrchestrator({ db, activity, chrome }), platforms: createPlatforms({ db, activity }), restore }
-}
+import { setup } from '../helpers/setup.js'
 
 test('vault: round trip, random IV, tamper detected, wrong key refused', () => {
   const v = createVault(randomBytes(32))
@@ -77,6 +66,7 @@ test('operator may only set discovered / rejected / paid_skipped by hand', () =>
   const { platforms, restore } = setup()
   const { platform } = platforms.create({ name: 'X', url: 'x.io' })
   assert.equal(platforms.update(platform.id, { status: 'rejected' }).status, 'rejected')
+  assert.equal(platforms.get(platform.id).status_reason, 'operator')
   assert.throws(() => platforms.update(platform.id, { status: 'live_backlink' }), /set by the agent/)
   restore()
 })
@@ -87,11 +77,12 @@ test('tasks: no duplicate active or completed task, lease recovery resumes at sa
   assert.equal(orchestrator.enqueue(platform.id, 'register').created, true)
   assert.equal(orchestrator.enqueue(platform.id, 'register').created, false)
   assert.throws(() => db.prepare(`INSERT INTO automation_tasks (platform_id, type) VALUES (?, 'register')`).run(platform.id), /UNIQUE/)
+  orchestrator.register('noop', async () => {})
 
   // A worker dies mid-task: state running, lease in the past, a saved step.
   db.prepare(`UPDATE automation_tasks SET state = 'running', step = 'form_filled', lease_until = '2000-01-01T00:00:00Z', locked_by = 'dead'`).run()
   let seenStep = null
-  orchestrator.register('register', async (task, ctx) => { seenStep = task.step; ctx.checkpoint('submitted', {}) })
+  orchestrator.register('register', async (task, ctx) => { seenStep = task.step; ctx.checkpoint('submitted', {}) }, { exhausted: null })
   db.prepare(`UPDATE system_settings SET value = 'running' WHERE key = 'automation_state'`).run()
   await orchestrator._tick()
   restore()
@@ -117,9 +108,12 @@ test('needs-you hand-off and resume', async () => {
   db.prepare(`UPDATE system_settings SET value = 'running' WHERE key = 'automation_state'`).run()
   await orchestrator._tick()
   assert.equal(db.prepare('SELECT state FROM automation_tasks').get().state, 'needs_you')
+  assert.equal(db.prepare('SELECT status FROM platforms').get().status, 'needs_you') // the platform says so too
   orchestrator.resumeTask(1)
+  assert.deepEqual(orchestrator.resumeTask(1), { ok: true, already: 'queued' }) // a repeated Resume is harmless
   restore()
   assert.equal(db.prepare('SELECT state FROM automation_tasks').get().state, 'queued')
+  assert.equal(db.prepare('SELECT status FROM platforms').get().status, 'discovered')
 })
 
 test('same blocker three times in a row ends the task instead of looping through Resume', async () => {
@@ -143,6 +137,7 @@ test('same blocker three times in a row ends the task instead of looping through
   assert.equal(state(), 'failed')
   assert.deepEqual(results.map(r => r.stuck), [false, false, false, false, true])
   assert.throws(() => orchestrator.resumeTask(1), /not waiting/)
+  assert.equal(db.prepare('SELECT status FROM platforms').get().status, 'discovered') // never left looking busy
 })
 
 test('deferring does not use up attempts', async () => {
@@ -156,15 +151,8 @@ test('deferring does not use up attempts', async () => {
   assert.deepEqual({ ...db.prepare('SELECT state, attempts FROM automation_tasks').get() }, { state: 'queued', attempts: 0 })
 })
 
-test('sign-up slot wait and block keys', async () => {
-  const { msUntilSignupSlot, blockKey } = await import('../../src/agent/submitTask.js')
-  const { db, platforms, restore } = setup()
-  restore()
-  const t = Date.parse('2026-11-03T10:00:00Z')
-  assert.equal(msUntilSignupSlot(db, t), 60_000)
-  const { platform } = platforms.create({ name: 'S', url: 's.io' })
-  db.prepare(`INSERT INTO accounts (platform_id, email, login_method, created_at) VALUES (?, 'a@b.c', 'email', '2026-11-03T09:20:00.000Z')`).run(platform.id)
-  assert.equal(msUntilSignupSlot(db, t), 20 * 60_000 + 5_000)
+test('block keys', async () => {
+  const { blockKey } = await import('../../src/agent/submitTask.js')
   assert.equal(blockKey('https://x.io/signup/?ref=1#a'), 'x.io/signup')
   assert.equal(blockKey('https://x.io/signup?ref=2'), 'x.io/signup')
 })

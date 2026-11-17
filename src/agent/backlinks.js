@@ -27,7 +27,7 @@ export function analyseLinks(links, { robots = '', xRobotsTag = '' } = {}) {
   }
 }
 
-export function createBacklinkChecker({ db, chrome, activity }) {
+export function createBacklinkChecker({ db, chrome, activity, status }) {
   async function read(url) {
     try {
       const p = await fetchPage(url, { timeoutMs: 20_000 })
@@ -59,7 +59,7 @@ export function createBacklinkChecker({ db, chrome, activity }) {
     const a = analyseLinks(page.links || [], page)
     const ok = page.status >= 200 && page.status < 400
     // No public listing URL yet (moderation queue): the link cannot be seen, so it stays pending, not missing.
-    const status = a.present && ok ? 'live' : !sub.listing_url ? 'pending' : ok ? 'missing' : 'error'
+    const linkStatus = a.present && ok ? 'live' : !sub.listing_url ? 'pending' : ok ? 'missing' : 'error'
     const wasLive = b.status === 'live'
     db.transaction(() => {
       db.prepare(`INSERT INTO backlink_history (backlink_id, http_status, link_present, rel, anchor_text, indexable, note) VALUES (?,?,?,?,?,?,?)`)
@@ -67,16 +67,17 @@ export function createBacklinkChecker({ db, chrome, activity }) {
       db.prepare(`UPDATE backlinks SET target_url = ?, anchor_text = ?, rel = ?, is_dofollow = ?, is_sponsored = ?, is_ugc = ?, http_status = ?,
           indexable = ?, status = ?, first_seen_at = COALESCE(first_seen_at, ?), last_checked_at = ?, next_check_at = ? WHERE id = ?`)
         .run(a.href ?? null, a.anchor ?? null, a.rel ?? null, a.present ? (a.dofollow ? 1 : 0) : null, a.present ? (a.sponsored ? 1 : 0) : null,
-          a.present ? (a.ugc ? 1 : 0) : null, page.status || null, a.indexable ? 1 : 0, status, status === 'live' ? now() : null, now(), next, b.id)
-      const platformStatus = status === 'live' ? 'live_backlink' : status === 'missing' ? 'no_backlink' : status === 'pending' ? 'pending_approval' : null
-      if (platformStatus) db.prepare(`UPDATE platforms SET status = ?, updated_at = ? WHERE id = ?`).run(platformStatus, now(), sub.pid)
-      if (status === 'live') db.prepare(`UPDATE submissions SET status = 'published', updated_at = ? WHERE id = ?`).run(now(), sub.id)
-      if (status === 'pending') db.prepare(`UPDATE submissions SET status = 'pending_approval', updated_at = ? WHERE id = ?`).run(now(), sub.id)
+          a.present ? (a.ugc ? 1 : 0) : null, page.status || null, a.indexable ? 1 : 0, linkStatus, linkStatus === 'live' ? now() : null, now(), next, b.id)
+      const want = linkStatus === 'live' ? 'live_backlink' : linkStatus === 'missing' ? (b.first_seen_at ? 'backlink_lost' : 'no_backlink') : null
+      const cur = db.prepare('SELECT status FROM platforms WHERE id = ?').get(sub.pid).status
+      if (want && cur !== want) {
+        status.transition(sub.pid, want, { reason: linkStatus === 'live' ? `link found (${a.rel || 'dofollow'})` : 'no link to docstar.io on the listing page', manual: true })
+      }
     })()
-    if (status === 'live') activity.success('backlink_verified', `${sub.name}: backlink live (${a.dofollow ? 'dofollow' : a.rel || 'nofollow'}, anchor "${a.anchor}")`, { platformId: sub.pid })
+    if (linkStatus === 'live') activity.success('backlink_verified', `${sub.name}: backlink live (${a.dofollow ? 'dofollow' : a.rel || 'nofollow'}, anchor "${a.anchor}")`, { platformId: sub.pid })
     else if (wasLive) activity.error('backlink_lost', `${sub.name}: backlink no longer found (HTTP ${page.status})`, { platformId: sub.pid })
-    else activity.info('backlink_checked', `${sub.name}: ${status} (HTTP ${page.status || 'no answer'})`, { platformId: sub.pid })
-    return { status, ...a, httpStatus: page.status }
+    else activity.info('backlink_checked', `${sub.name}: ${linkStatus} (HTTP ${page.status || 'no answer'})`, { platformId: sub.pid })
+    return { status: linkStatus, ...a, httpStatus: page.status }
   }
 
   return {

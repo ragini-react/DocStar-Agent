@@ -39,7 +39,10 @@ const schema = {
 
 const QUALIFY_SLICE = 5000
 
-export function createQualifier({ db, ai, activity, chrome, listings, approvals, orchestrator }) {
+/** The one threshold rule: a score at or above the minimum qualifies. */
+export const qualifies = (score, min) => Number(score) >= Number(min)
+
+export function createQualifier({ db, ai, activity, chrome, listings, approvals, orchestrator, status, autoApproval = null }) {
   // Reading pages in Chrome is optional: without it, blocked sites are read over HTTP only.
   async function read(url) {
     try {
@@ -78,8 +81,9 @@ export function createQualifier({ db, ai, activity, chrome, listings, approvals,
       if (landed !== p.domain && !landed.endsWith(`.${p.domain}`)) {
         const twin = db.prepare(`SELECT id, name FROM platforms WHERE id <> ? AND (domain = ? OR ? LIKE '%.' || domain)`).get(p.id, landed, landed)
         if (twin) {
-          db.prepare(`UPDATE platforms SET status = 'rejected', notes = ?, updated_at = ? WHERE id = ?`)
+          db.prepare(`UPDATE platforms SET notes = ?, updated_at = ? WHERE id = ?`)
             .run(`duplicate: ${p.domain} redirects to ${landed}, already listed as ${twin.name}`, now(), p.id)
+          status.transition(p.id, 'rejected', { statusReason: 'duplicate', reason: `${p.domain} redirects to ${landed}, already listed as ${twin.name}` })
           activity.info('platform_rejected', `${p.name}: duplicate of ${twin.name} (${p.domain} redirects to ${landed})`, { platformId: p.id })
           return { status: 'rejected', reason: 'duplicate', score: null }
         }
@@ -99,13 +103,13 @@ export function createQualifier({ db, ai, activity, chrome, listings, approvals,
       })
 
       const minScore = Number(getSetting(db, 'min_quality_score', 55))
-      let status, reason
-      if (!q.legitimate) [status, reason] = ['rejected', 'not a legitimate platform']
-      else if (q.listing_requires_payment || (q.pricing === 'paid' && !q.free_listing_available)) [status, reason] = ['paid_skipped', q.pricing_notes || 'listing requires payment']
-      else if (!q.accepts_submissions) [status, reason] = ['rejected', 'does not accept submissions']
-      else if (q.automation_prohibited) [status, reason] = ['rejected', `terms prohibit automated submission: ${q.automation_note}`]
-      else if (q.overall < minScore) [status, reason] = ['rejected', `quality ${q.overall} below ${minScore}`]
-      else [status, reason] = ['qualified', q.summary]
+      let result, reason, code = null
+      if (!q.legitimate) [result, reason, code] = ['rejected', 'not a legitimate platform', 'not_legitimate']
+      else if (q.listing_requires_payment || (q.pricing === 'paid' && !q.free_listing_available)) [result, reason, code] = ['paid_skipped', q.pricing_notes || 'listing requires payment', 'paid_only']
+      else if (!q.accepts_submissions) [result, reason, code] = ['rejected', 'does not accept submissions', 'not_accepting']
+      else if (q.automation_prohibited) [result, reason, code] = ['rejected', `terms prohibit automated submission: ${q.automation_note}`, 'policy']
+      else if (!qualifies(q.overall, minScore)) [result, reason, code] = ['rejected', `quality ${q.overall} below ${minScore}`, 'low_score']
+      else [result, reason] = ['qualified', q.summary]
 
       const catId = db.prepare('SELECT id FROM platform_categories WHERE slug = ?').get(q.category)?.id ?? null
       db.transaction(() => {
@@ -115,30 +119,36 @@ export function createQualifier({ db, ai, activity, chrome, listings, approvals,
           q.referral_potential, q.backlink_quality, q.overall, q.seo_value, 'ai:claude-sonnet-5-5', JSON.stringify(pages.map(x => x.url)))
         db.prepare(`UPDATE platforms SET category_id = COALESCE(?, category_id), submission_url = COALESCE(NULLIF(?, ''), submission_url),
             pricing = ?, pricing_notes = ?, registration_requirements = ?, submission_requirements = ?, backlink_availability = ?,
-            automation_policy = ?, domain_reputation = ?, reputation_source = 'ai estimate from site content', status = ?,
+            automation_policy = ?, domain_reputation = ?, reputation_source = 'ai estimate from site content',
             notes = ?, updated_at = ? WHERE id = ?`)
           .run(catId, q.submission_url, q.pricing, q.pricing_notes || null,
             `${q.requires_account ? 'account required' : 'no account needed'}; sign-in: ${q.login_methods.join(', ') || 'unknown'}`,
             q.submission_requirements || null, q.backlink, q.automation_prohibited ? 'prohibited' : 'unclear',
-            q.domain_reputation, status, reason, now(), p.id)
+            q.domain_reputation, reason, now(), p.id)
+        status.transition(p.id, result, { statusReason: code, reason: `score ${q.overall}: ${reason}` })
       })()
-      const level = status === 'qualified' ? 'success' : 'info'
-      activity[level](`platform_${status}`, `${p.name}: ${status.replace('_', ' ')} (score ${q.overall}) — ${reason}`, { platformId: p.id })
 
       // The listing is written from the approved DocStar profile; until it is approved, qualified platforms wait.
-      if (status === 'qualified') orchestrator.enqueue(p.id, 'prepare')
-      return { status, reason, score: q.overall }
+      if (result === 'qualified') orchestrator.enqueue(p.id, 'prepare')
+      return { status: result, reason, score: q.overall }
     },
 
     /** Task 'prepare': write the listing, then ask the operator (or queue the submission when approval is off). */
     async prepare(platformId, ctx) {
-      if (!listings.ready()) return ctx.defer(30 * 60_000, 'waiting for the DocStar profile to be approved')
+      // The profile is approved by a person: wait for that event instead of retrying on a timer.
+      if (!listings.ready()) return ctx.waitFor('company_approved', 'waiting for the DocStar profile to be approved')
       const p = db.prepare('SELECT status FROM platforms WHERE id = ?').get(platformId)
-      if (p?.status !== 'qualified') return
-      const listing = await listings.draft(platformId)
-      const q = db.prepare('SELECT * FROM platform_scores WHERE platform_id = ? ORDER BY scored_at DESC LIMIT 1').get(platformId)
-      if (getSetting(db, 'require_approval', '1') === '1') approvals.request(platformId, 'platform', { score: q, listing })
-      else orchestrator.enqueue(platformId, 'submit')
+      if (p?.status !== 'qualified' && p?.status !== 'listing_drafted') return
+      const listing = p.status === 'listing_drafted' ? listings.get(platformId) : await listings.draft(platformId)
+      if (p.status === 'qualified') status.transition(platformId, 'listing_drafted', { taskId: ctx.task?.id, reason: 'listing written from the approved profile' })
+      const q = db.prepare('SELECT * FROM platform_scores WHERE platform_id = ? ORDER BY scored_at DESC, id DESC LIMIT 1').get(platformId)
+      const auto = autoApproval ? autoApproval(platformId, listing) : { ok: false }
+      if (getSetting(db, 'require_approval', '1') !== '1') approvals.approvePlatform(platformId, { auto: true, why: 'approval is switched off in Settings' })
+      else if (auto.ok) {
+        approvals.request(platformId, 'platform', { score: q, listing })
+        const pending = db.prepare(`SELECT id FROM human_approvals WHERE platform_id = ? AND status = 'pending'`).get(platformId)
+        approvals.approve(pending.id, null, { auto: true, why: auto.why })
+      } else approvals.request(platformId, 'platform', { score: q, listing, autoApprovalSkipped: auto.why || null })
     }
   }
 }

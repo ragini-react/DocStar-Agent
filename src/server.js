@@ -10,6 +10,13 @@ import { createGmail } from './integrations/gmail.js'
 import { createChrome } from './browser/chrome.js'
 import { createOrchestrator } from './engine/orchestrator.js'
 import { createPlatforms } from './platforms/service.js'
+import { createViews } from './platforms/views.js'
+import { createStatus } from './engine/status.js'
+import { createMaintenance } from './engine/maintenance.js'
+import { repairData, repairDone } from './db/repair.js'
+import { repairSteps } from './db/repairSteps.js'
+import { writeFileSync } from 'node:fs'
+import path from 'node:path'
 import { createApp } from './server/app.js'
 import { createAgent } from './agent/index.js'
 import { createMirrorPusher, createMirrorReceiver } from './sync/mirror.js'
@@ -19,15 +26,29 @@ const db = openDb(config.dbPath)
 const vault = createVault(config.masterKey)
 const activity = createActivityLog(db)
 if (config.hosted) importSeedIfEmpty(db, config.seedPath, activity)
+const status = createStatus({ db, activity })
+const views = createViews({ db })
 const gmail = createGmail({ db, vault, activity, viasocket, config })
 const chrome = createChrome({ config, activity })
-const orchestrator = createOrchestrator({ db, activity, chrome, browser: !config.hosted })
-const platforms = createPlatforms({ db, activity })
+const orchestrator = createOrchestrator({ db, activity, chrome, status, browser: !config.hosted })
+const platforms = createPlatforms({ db, activity, status, orchestrator })
 
-const agent = createAgent({ db, vault, activity, chrome, gmail, orchestrator, platforms, config })
+const agent = createAgent({ db, vault, activity, chrome, gmail, orchestrator, platforms, status, config })
 orchestrator.boot()
+const maintenance = createMaintenance({ db, activity, status, orchestrator, hooks: { feedQueue: () => agent.feedQueue() } })
+// A hosted mirror shows the Mac's records: it never rewrites them itself.
+if (!config.hosted) {
+  if (!repairDone(db)) {
+    // One-time repair of records written before the state machine (report saved next to the database).
+    const r = repairData({ db, status, activity, orchestrator, maintenance, extraSteps: repairSteps })
+    const file = path.join(path.dirname(config.dbPath), `repair-report-${new Date().toISOString().slice(0, 10)}.md`)
+    writeFileSync(file, r.report, { mode: 0o600 })
+    activity.warn('data_repaired', `One-time data repair done: ${r.notes.length} change(s); report in ${path.basename(file)}`)
+  }
+  maintenance.start()
+}
 const mirrorReceiver = config.hosted && config.mirror.receiveToken ? createMirrorReceiver({ db, activity, token: config.mirror.receiveToken }) : null
-const app = createApp({ config, db, vault, activity, gmail, chrome, orchestrator, platforms, agent, mirror: mirrorReceiver })
+const app = createApp({ config, db, vault, activity, gmail, chrome, orchestrator, platforms, agent, status, views, maintenance, mirror: mirrorReceiver })
 const mirrorPusher = !config.hosted && config.mirror.url && config.mirror.token
   ? createMirrorPusher({ db, activity, chrome, gmail, orchestrator, replay: app.locals.replay, url: config.mirror.url, token: config.mirror.token })
   : null
@@ -40,6 +61,7 @@ process.on('unhandledRejection', e => activity.error('unhandled', maskError(e)))
 for (const sig of ['SIGINT', 'SIGTERM']) {
   process.on(sig, async () => {
     orchestrator.shutdown()
+    maintenance.shutdown()
     agent.shutdown()
     mirrorPusher?.shutdown()
     server.close()

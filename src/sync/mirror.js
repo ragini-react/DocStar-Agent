@@ -73,7 +73,7 @@ export function applySnapshot(db, snap) {
 export function createMirrorReceiver({ db, activity, token }) {
   db.exec(`CREATE TABLE IF NOT EXISTS mirror_commands (
     id INTEGER PRIMARY KEY, method TEXT NOT NULL, path TEXT NOT NULL, body TEXT,
-    state TEXT NOT NULL DEFAULT 'pending', created_at TEXT NOT NULL, sent_at TEXT)`)
+    state TEXT NOT NULL DEFAULT 'queued', created_at TEXT NOT NULL, sent_at TEXT)`)
   let status = JSON.parse(getSetting(db, 'mirror_status', 'null') || 'null') // last live status from the Mac
   let conflictLoggedAt = 0
 
@@ -118,7 +118,7 @@ export function createMirrorReceiver({ db, activity, token }) {
       if (body.status) { status = body.status; setSetting(db, 'mirror_status', JSON.stringify(status)) }
       setSetting(db, 'mirror_last_push', now())
       if (body.snapshot || body.status) activity.feed.emit('sync', { at: now() })
-      const commands = db.prepare(`SELECT id, method, path, body FROM mirror_commands WHERE state = 'pending' ORDER BY id LIMIT 20`).all()
+      const commands = db.prepare(`SELECT id, method, path, body FROM mirror_commands WHERE state = 'queued' ORDER BY id LIMIT 20`).all()
       if (commands.length) db.prepare(`UPDATE mirror_commands SET state = 'sent', sent_at = ? WHERE id IN (${commands.map(() => '?').join(',')})`).run(now(), ...commands.map(c => c.id))
       // Commands older than a day were never picked up: drop them rather than surprise anyone later.
       db.prepare(`DELETE FROM mirror_commands WHERE created_at < ?`).run(new Date(Date.now() - 86400_000).toISOString())

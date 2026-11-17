@@ -36,7 +36,7 @@ export function createListings({ db, ai, company }) {
         prompt: 'You write a directory listing for DocStar using ONLY the approved facts given. Never add numbers, customers, awards, integrations or capabilities that are not in the facts. Vary wording per platform; no keyword stuffing. Do not browse.',
         message: `PLATFORM: ${p.name} (${p.domain})\nWHAT IT ASKS FOR: ${p.submission_requirements || 'unknown'}\nCONTEXT: ${p.notes || ''}\n\nAPPROVED FACTS:\n${JSON.stringify(facts, null, 1)}`
       })
-      this.save(platformId, l, 'approval_required')
+      this.save(platformId, l, 'draft')
       return l
     },
 
