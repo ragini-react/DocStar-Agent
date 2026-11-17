@@ -3,6 +3,7 @@
 // A submission never counts as live until this check has seen the link.
 import { getSetting, now } from '../db/index.js'
 import { fetchPage } from './fetchPage.js'
+import { safeEvaluate, settle } from '../browser/pageGuard.js'
 
 const TARGET = /(^|\.)docstar\.io$/i
 
@@ -37,10 +38,10 @@ export function createBacklinkChecker({ db, chrome, activity, status }) {
     if (!chrome) return { status: 0, links: [], error: 'page blocks plain requests; it needs the browser check' }
     let page
     try {
-      page = await (await chrome.context()).newPage()
+      page = await chrome.isolatedPage() // a read-only visit: never in the DocStar profile
       const res = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30_000 })
-      await page.waitForTimeout(3000)
-      const data = await page.evaluate(() => ({
+      await settle(page)
+      const data = await safeEvaluate(page, () => ({
         links: [...document.querySelectorAll('a[href]')].map(a => ({ href: a.href, rel: a.getAttribute('rel') || '', text: a.innerText.trim() })),
         robots: document.querySelector('meta[name="robots" i]')?.content || ''
       }))

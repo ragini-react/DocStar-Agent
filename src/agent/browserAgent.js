@@ -1,3 +1,4 @@
+import { quietAfter, safeEvaluate, settle } from '../browser/pageGuard.js'
 // What the AI sees of a page and how its validated decisions are carried out in the agent's Chrome.
 // Elements are tagged with data-ds-ref="eN" by our own snapshot script; the AI only ever names those refs.
 
@@ -43,9 +44,10 @@ function snapshotInPage(limit) {
   return { url: location.href, title: document.title, elements: lines, refs: lines.map(l => l.slice(1, l.indexOf(']'))), text: (document.body?.innerText || '').replace(/\n{2,}/g, '\n').slice(0, 3500), captcha, otp }
 }
 
+/** Navigation-safe: a page that navigates while being read is read again once it has loaded. */
 export async function snapshot(page) {
   await page.waitForLoadState('domcontentloaded', { timeout: 15_000 }).catch(() => {})
-  return page.evaluate(snapshotInPage, 160)
+  return safeEvaluate(page, snapshotInPage, 160)
 }
 
 export function renderSnapshot(s) {
@@ -63,13 +65,12 @@ export const isPaymentPage = url => { try { const u = new URL(url); return PAYME
 /** Carry out one validated action. Returns a short description of what happened for the next AI turn. */
 export async function execute(page, action, { values, logoPath }) {
   const el = () => page.locator(`[data-ds-ref="${action.target}"]`).first()
-  const settle = () => page.waitForLoadState('domcontentloaded', { timeout: 10_000 }).catch(() => {}).then(() => page.waitForTimeout(1500))
+  const settled = () => settle(page)
   switch (action.action) {
     case 'click':
     case 'submit':
       await el().scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => {})
-      await el().click({ timeout: 10_000 })
-      await settle()
+      await quietAfter(page, () => el().click({ timeout: 10_000 }))
       return `clicked ${action.target}`
     case 'type': {
       const text = fill(action.value, values)
@@ -81,19 +82,19 @@ export async function execute(page, action, { values, logoPath }) {
       return `selected "${action.value}"`
     case 'upload':
       if (!logoPath) throw new Error('no logo file available')
-      await el().setInputFiles(logoPath, { timeout: 10_000 })
-      await page.waitForTimeout(1500)
+      await quietAfter(page, () => el().setInputFiles(logoPath, { timeout: 10_000 })) // the upload's own request finishes first
       return 'uploaded the DocStar logo'
     case 'scroll':
       await page.mouse.wheel(0, action.value === 'up' ? -800 : 800)
-      await page.waitForTimeout(700)
+      await page.waitForLoadState('networkidle', { timeout: 2_000 }).catch(() => {}) // lazy-loaded content
       return `scrolled ${action.value}`
     case 'wait':
-      await page.waitForTimeout(Number(action.value) * 1000)
-      return `waited ${action.value}s`
+      // Wait for the page to finish what it is doing, at most the seconds asked for: never a blind sleep.
+      await page.waitForLoadState('networkidle', { timeout: Number(action.value) * 1000 }).catch(() => {})
+      return `waited for the page (up to ${action.value}s)`
     case 'navigate':
       await page.goto(action.value, { waitUntil: 'domcontentloaded', timeout: 30_000 })
-      await page.waitForTimeout(1500)
+      await settled()
       return `opened ${new URL(action.value).host}`
     default:
       throw new Error(`execute does not handle ${action.action}`)

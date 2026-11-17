@@ -3,6 +3,7 @@
 // or qualified (then waits for the operator's approval, or goes straight to the queue when approval is off).
 import { now, getSetting } from '../db/index.js'
 import { fetchPage } from './fetchPage.js'
+import { safeEvaluate, settle } from '../browser/pageGuard.js'
 import { arr, bool, int, obj, oneOf, str } from './schema.js'
 
 const score = d => int(`0–100: ${d}`)
@@ -58,11 +59,11 @@ export function createQualifier({ db, ai, activity, chrome, listings, approvals,
     if (!chrome) return { url, status: httpStatus, text: '', links: [] } // hosted copy: plain fetches only
     let page
     try {
-      page = await (await chrome.context()).newPage()
+      page = await chrome.isolatedPage() // a read-only visit: never in the DocStar profile
       const res = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30_000 })
-      await page.waitForTimeout(2500)
-      const text = await page.evaluate(() => document.body?.innerText || '')
-      const links = await page.evaluate(() => [...document.querySelectorAll('a[href]')].map(a => ({ href: a.href, text: a.innerText.trim().slice(0, 80) })))
+      await settle(page)
+      const { text, links } = await safeEvaluate(page, () => ({ text: document.body?.innerText || '',
+        links: [...document.querySelectorAll('a[href]')].map(a => ({ href: a.href, text: a.innerText.trim().slice(0, 80) })) }))
       return { url: page.url(), status: res?.status() ?? httpStatus, text, links, viaChrome: true }
     } catch (e) {
       return { url, status: httpStatus, text: '', links: [], error: e.message }

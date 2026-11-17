@@ -377,7 +377,7 @@ $('#btn-seeds').addEventListener('click', e => act(e.currentTarget, '/api/platfo
 
 // ---------- needs you ----------
 function needsYouItem(t) {
-  return `<div class="list-item" data-platform="${t.platform_id}" data-name="${esc(t.name)}"><div class="reason"><strong>${esc(t.name)}</strong>
+  return `<div class="list-item" data-platform="${t.platform_id}" data-name="${esc(t.name)}" data-where="${esc(t.where || '')}"><div class="reason"><strong>${esc(t.name)}</strong>
       <div class="small"><b>What happened:</b> ${esc(t.reason)}</div>
       <div class="small"><b>What to do:</b> ${esc(t.todo)}</div>
       ${t.where ? `<div class="small">Where: ${link(t.where)}${hosted ? '' : ' <button class="btn small" data-open-here>Open it in the agent\'s Chrome</button>'}</div>` : ''}
@@ -434,7 +434,7 @@ $('#approvals').addEventListener('click', run(async e => {
 $('#needs-you').addEventListener('click', run(async e => {
   const item = e.target.closest('[data-platform]')
   if (!item) return
-  if (e.target.matches('[data-open-here]')) return act(e.target, '/api/chrome/front', { method: 'POST' })
+  if (e.target.matches('[data-open-here]')) return act(e.target, '/api/chrome/open', { method: 'POST', body: { url: item.dataset.where } }, () => toast('Opened in the agent\'s Chrome', 'ok'))
   const a = e.target.closest('[data-act]')?.dataset.act
   if (a) await platformAction(item.dataset.platform, a, e.target, item.dataset.name)
 }))

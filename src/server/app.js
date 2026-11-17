@@ -348,6 +348,8 @@ export function createApp({ config, db, vault, activity, gmail, chrome, orchestr
   app.post('/api/chrome/launch', wrap(async (req, res) => { await chrome.connect(); await chrome.bringToFront(); res.json(await chrome.status()) }))
   app.post('/api/chrome/google-signin', wrap(async (req, res) => { await chrome.openGoogleSignIn(); res.json({ ok: true }) }))
   app.post('/api/chrome/front', wrap(async (req, res) => { await chrome.bringToFront(); res.json({ ok: true }) }))
+  // Open a needs-you page in the agent's Chrome, for the person to finish the step there.
+  app.post('/api/chrome/open', wrap(async (req, res) => { await chrome.open(String(req.body?.url || '')); res.json({ ok: true }) }))
   app.post('/api/chrome/close', wrap(async (req, res) => {
     if (orchestrator.state() === 'running') return res.status(409).json({ error: 'Pause or stop the automation first' })
     await chrome.close({ quit: true })

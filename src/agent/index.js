@@ -11,6 +11,8 @@ import { createDiscovery } from './discovery.js'
 import { createQualifier } from './qualify.js'
 import { createSubmitTask } from './submitTask.js'
 import { createBacklinkChecker } from './backlinks.js'
+import { createListingFinder } from './listingFinder.js'
+import { createPlaybooks } from './playbooks.js'
 
 const DISCOVERY_EVERY_MS = 6 * 3600_000
 const BACKLINK_EVERY_MS = 10 * 60_000
@@ -35,7 +37,9 @@ export function createAgent({ db, vault, activity, chrome, gmail, orchestrator, 
   const browser = config.hosted ? null : chrome // a hosted copy has no Chrome: browser steps run elsewhere
   const qualifier = createQualifier({ db, ai, activity, chrome: browser, listings, approvals, orchestrator, status, autoApproval: (...a) => autoApproval?.(...a) ?? { ok: false } })
   const backlinks = createBacklinkChecker({ db, chrome: browser, activity, status })
-  const submit = createSubmitTask({ db, vault, ai, chrome, gmail, company, listings, activity, config, status })
+  const finder = createListingFinder({ ai })
+  const playbooks = createPlaybooks({ db })
+  const submit = createSubmitTask({ db, vault, ai, chrome, gmail, company, listings, activity, config, status, finder, playbooks })
 
   orchestrator.register('discover', async () => {
     const r = await discovery.run({ batch: Number(getSetting(db, 'discovery_batch', 10)) })
@@ -112,7 +116,7 @@ export function createAgent({ db, vault, activity, chrome, gmail, orchestrator, 
   timer.unref?.()
 
   return {
-    ai, company, listings, approvals, discovery, qualifier, backlinks,
+    ai, company, listings, approvals, discovery, qualifier, backlinks, finder, playbooks,
     queueDiscovery,
     feedQueue,
     approveCompany() {
