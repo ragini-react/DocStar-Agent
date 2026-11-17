@@ -362,8 +362,14 @@ export function createApp({ config, db, vault, activity, gmail, chrome, orchestr
   }))
 
   // Settings
-  const SETTINGS = { max_signups_per_hour: [1, 10], backlink_check_hours: [6, 72], require_approval: [0, 1], min_quality_score: [30, 90], discovery_batch: [3, 20] }
-  const DEFAULTS = { require_approval: 1, min_quality_score: 55, discovery_batch: 10 }
+  const SETTINGS = {
+    max_signups_per_hour: [1, 10], max_signups_per_day: [1, 50], parallel_tasks: [1, 8], max_attempts: [1, 10], stale_minutes: [10, 240],
+    backlink_recheck_live_hours: [6, 168], backlink_recheck_pending_hours: [1, 72], nofollow_counts_as_live: [0, 1],
+    require_approval: [0, 1], auto_approve: [0, 1], auto_approve_min_score: [30, 100], min_quality_score: [30, 90], discovery_batch: [3, 20],
+    offline_alert_minutes: [5, 120]
+  }
+  const DEFAULTS = { require_approval: 1, min_quality_score: 55, discovery_batch: 10, max_signups_per_day: 10, parallel_tasks: 3, max_attempts: 5, stale_minutes: 30,
+    backlink_recheck_live_hours: 24, backlink_recheck_pending_hours: 12, nofollow_counts_as_live: 1, auto_approve: 0, auto_approve_min_score: 65, offline_alert_minutes: 10, max_signups_per_hour: 3 }
   const settingValue = k => Number(getSetting(db, k, DEFAULTS[k]))
   app.get('/api/settings', (req, res) => res.json(Object.fromEntries(Object.keys(SETTINGS).map(k => [k, settingValue(k)]))))
   app.patch('/api/settings', wrap(async (req, res) => {
@@ -375,6 +381,7 @@ export function createApp({ config, db, vault, activity, gmail, chrome, orchestr
       setSetting(db, k, n)
       activity.info('setting_changed', `${k} set to ${n}`)
     }
+    orchestrator.wake() // a higher limit or more parallel slots may let waiting work start now
     res.json(Object.fromEntries(Object.keys(SETTINGS).map(k => [k, settingValue(k)])))
   }))
 

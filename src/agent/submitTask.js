@@ -9,7 +9,7 @@ import { getSetting, now } from '../db/index.js'
 import { signupSlot } from '../engine/rateLimit.js'
 import { PermanentError } from '../engine/orchestrator.js'
 import { browserActionSchema, validateBrowserAction } from '../ai/actionSchema.js'
-import { execute, isPaymentPage, renderSnapshot, snapshot } from './browserAgent.js'
+import { execute, fill, isPaymentPage, renderSnapshot, snapshot } from './browserAgent.js'
 import { fetchPage } from './fetchPage.js'
 
 const MAX_STEPS = 45
@@ -98,7 +98,7 @@ export function createSubmitTask({ db, vault, ai, chrome, gmail, company, listin
         activity.success('verification_email', `Verification email received from ${p.domain}`, { platformId: p.id })
         return found
       }
-      ctx.checkpoint('waiting_for_email', { waiting: true })
+      ctx.checkpoint('waiting_for_email', { ...JSON.parse(db.prepare('SELECT checkpoint FROM automation_tasks WHERE id = ?').get(task.id)?.checkpoint || '{}'), waiting: true })
       await new Promise(r => setTimeout(r, 30_000))
     }
     db.prepare(`UPDATE email_verifications SET status = 'not_found' WHERE id = ?`).run(row.id)
@@ -137,13 +137,18 @@ export function createSubmitTask({ db, vault, ai, chrome, gmail, company, listin
 
     const page0 = await activePage(task, cp.url || p.submission_url || p.url)
     await page0.bringToFront().catch(() => {})
-    let feedback = cp.url ? `Resumed after: ${cp.step || 'start'}.` : 'Start.'
+    // Resume from the last verified checkpoint: the page, the step count and what was already filled in there.
+    let verified = { steps: cp.steps || 0, url: cp.url || null, stage: cp.stage || null, lastAction: cp.lastAction || null, form: cp.form || {} }
+    const saveVerified = desc => ctx.checkpoint(desc, verified)
+    let feedback = cp.url
+      ? `Resumed after verified step ${cp.steps || 0}${cp.lastAction ? ` (${cp.lastAction})` : ''} on ${cp.url}.${Object.keys(verified.form).length ? ` Fields already filled on that page: ${Object.entries(verified.form).map(([k, v]) => `${k}: ${v}`).join('; ')}. Check them and fill only what is empty.` : ''}`
+      : 'Start.'
     let invalid = 0
     for (let step = (cp.steps || 0) + 1; step <= (cp.steps || 0) + MAX_STEPS; step++) {
-      if (!ctx.shouldContinue()) { ctx.checkpoint(`paused at step ${step}`, { url: (await activePage(task)).url(), steps: step - 1 }); return }
+      if (!ctx.shouldContinue()) { saveVerified(`paused after step ${verified.steps}`); return }
       const page = await activePage(task, p.url)
       const snap = await snapshot(page)
-      ctx.checkpoint(`step ${step}`, { url: snap.url, steps: step - 1 })
+      saveVerified(`step ${verified.steps}`) // keeps the lease; the verified data changes only after a step succeeds
 
       if (isPaymentPage(snap.url)) return finishSkip(p, task, 'paid', `payment page reached (${new URL(snap.url).host})`)
       if (snap.captcha || snap.otp) {
@@ -195,6 +200,15 @@ export function createSubmitTask({ db, vault, ai, chrome, gmail, company, listin
       values['account.password'] = password(p.id) ?? ''
       try {
         feedback = await execute(page, a, { values, logoPath: logo })
+        // A verified checkpoint: the step worked, so a resume continues from here, not from the start.
+        const fieldName = (snap.elements.find(l => l.startsWith(`[${a.target}]`)) || '').replace(/^\[e\d+\]\s*\w+\s*"([^"]*)".*$/, '$1') || a.target
+        const nowUrl = (await activePage(task, p.url)).url()
+        if (blockKey(nowUrl) !== blockKey(verified.url || '')) verified.form = {}
+        if (a.action === 'type') verified.form[fieldName] = a.value.includes('password') ? 'filled (secret)' : `filled (${fill(a.value, values).length} chars)`
+        if (a.action === 'select') verified.form[fieldName] = `selected "${a.value}"`
+        if (a.action === 'upload') verified.form[fieldName] = 'logo uploaded'
+        verified = { ...verified, steps: step, url: nowUrl, lastAction: `${a.action}${a.target ? ' ' + fieldName : ''}`, stage: account(p.id)?.signup_completed_at ? 'listing' : account(p.id) ? 'signup' : 'start' }
+        saveVerified(`step ${step}: ${verified.lastAction}`)
       } catch (e) {
         feedback = `FAILED: ${maskError(e).slice(0, 200)}`
       }

@@ -161,10 +161,20 @@
         <form id="settings-form" class="card settings">
           <h2>Guardrails</h2>
           <label>Maximum sign-ups per hour <input name="max_signups_per_hour" type="number" min="1" max="10" required></label>
-          <label>Check backlinks every (hours) <input name="backlink_check_hours" type="number" min="6" max="72" required></label>
+          <label>Maximum sign-ups per day <input name="max_signups_per_day" type="number" min="1" max="50" required></label>
+          <label>Evaluations / checks run in parallel <input name="parallel_tasks" type="number" min="1" max="8" required></label>
+          <label>Attempts per task before it needs you <input name="max_attempts" type="number" min="1" max="10" required></label>
+          <label>A step counts as stuck after (minutes) <input name="stale_minutes" type="number" min="10" max="240" required></label>
+          <label>Re-check live backlinks every (hours) <input name="backlink_recheck_live_hours" type="number" min="6" max="168" required></label>
+          <label>Check pending listings every (hours) <input name="backlink_recheck_pending_hours" type="number" min="1" max="72" required></label>
+          <label class="check"><input name="nofollow_counts_as_live" type="checkbox"> Count a nofollow link as a live backlink</label>
           <label>Minimum quality score to qualify <input name="min_quality_score" type="number" min="30" max="90" required></label>
           <label>Platforms per discovery run <input name="discovery_batch" type="number" min="3" max="20" required></label>
-          <label class="check"><input name="require_approval" type="checkbox"> Ask for my approval before registering and submitting on each platform</label>
+          <label>Alert when the agent is offline for (minutes) <input name="offline_alert_minutes" type="number" min="5" max="120" required></label>
+          <h2>Approvals</h2>
+          <label class="check"><input name="require_approval" type="checkbox"> Approvals on (master switch): nothing is registered or submitted without an approval</label>
+          <label class="check"><input name="auto_approve" type="checkbox"> Approve automatically when safe: only approved profile facts, free platform, no unusual requirements, and a score of at least</label>
+          <label>Auto-approve minimum score <input name="auto_approve_min_score" type="number" min="30" max="100" required></label>
           <button class="btn primary" type="submit">Save</button>
         </form>
       </section>
