@@ -5,7 +5,8 @@
   "scripts": {
     "test": "node --test tests/unit/*.test.js tests/integration/*.test.js",
     "start": "node src/server.js",
-    "test:phase1": "node --env-file=.env tests/phase1-ai.mjs && node --env-file=.env tests/phase1-gmail.mjs"
+    "test:phase1": "node --env-file=.env tests/phase1-ai.mjs && node --env-file=.env tests/phase1-gmail.mjs",
+    "deploy": "bash scripts/deploy.sh"
   },
   "keywords": [],
   "author": "",
