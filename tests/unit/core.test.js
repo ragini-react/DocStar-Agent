@@ -206,7 +206,7 @@ test('mirror: hosted copy gets the Mac records without secrets, runs nothing its
   assert.equal(receiver.chrome().attached, true)
   assert.equal(receiver.on(), true)
 
-  const id = receiver.queue('POST', '/api/chrome/launch', {})
+  const { id } = receiver.queue('POST', '/api/chrome/launch', {})
   assert.deepEqual(receiver.receive({}).commands.map(c => [c.id, c.path]), [[id, '/api/chrome/launch']])
   assert.equal(receiver.receive({}).commands.length, 0) // handed out once only
   applySnapshot(hosted.db, buildSnapshot(mac.db)) // applying twice is safe

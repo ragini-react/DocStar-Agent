@@ -153,3 +153,24 @@ td a { color: var(--accent); text-decoration: none; }
 .settings .check { display: flex; align-items: center; gap: 8px; font-weight: 500; }
 .banner { background: var(--accent-soft); color: var(--accent); border-radius: var(--radius); padding: 10px 14px; font-size: 13px; font-weight: 550; margin: -6px 0 16px; }
 .banner.warn { background: var(--warn-soft); color: var(--warn); }
+
+/* sync state, pending changes, dialogs, failures */
+.sync { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); margin-left: auto; flex-wrap: wrap; }
+.sync.offline #sync-text { color: var(--err); font-weight: 600; }
+.pending-panel { position: fixed; right: 16px; top: 64px; width: min(440px, calc(100vw - 32px)); max-height: 70vh; overflow: auto; z-index: 20; }
+.pending-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.pending-list li { display: grid; gap: 2px; border-bottom: 1px solid var(--border); padding-bottom: 8px; }
+.toast.pending { background: var(--warn-soft); color: var(--warn); }
+.toast.ok { background: var(--ok-soft); color: var(--ok); }
+.dialog { border: 1px solid var(--border); border-radius: 12px; padding: 0; background: var(--surface); color: var(--text); width: min(520px, calc(100vw - 32px)); }
+.dialog::backdrop { background: rgba(0,0,0,.35); }
+.dialog-form { display: grid; gap: 12px; padding: 20px; }
+.dialog-form label { display: grid; gap: 4px; font-weight: 550; }
+textarea { font: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 7px 10px; width: 100%; }
+.pager { margin-top: 10px; align-items: center; }
+.kpi.link { cursor: pointer; } .kpi.link:hover { outline: 2px solid var(--accent-soft); }
+.reason { display: grid; gap: 2px; }
+.history { font-size: 12px; color: var(--muted); margin: 4px 0 0; padding-left: 16px; }
+tr.pending-row { opacity: .7; } tr.pending-row td { font-style: italic; }
+tr.flash { animation: flash 1.2s ease-out; }
+@keyframes flash { from { background: var(--accent-soft); } to { background: transparent; } }

@@ -86,9 +86,11 @@ export function createPlatforms({ db, activity, status, orchestrator = null }) {
     GROUPS,
 
     /** Paginated and filtered on the server. Returns { rows, total, limit, offset }. */
-    list({ q, status, group, category, pricing, sort = 'name', limit = 100, offset = 0 } = {}) {
+    list({ q, status, group, category, pricing, ids, sort = 'name', limit = 100, offset = 0 } = {}) {
       const where = []
       const args = []
+      // Specific rows (live refresh of the rows an event touched).
+      if (ids) { const list = String(ids).split(',').map(Number).filter(Boolean).slice(0, 200); where.push(`p.id IN (${list.map(() => '?').join(',') || 'NULL'})`); args.push(...list) }
       if (q) { where.push('(p.name LIKE ? OR p.domain LIKE ?)'); args.push(`%${q}%`, `%${q}%`) }
       if (status) { where.push('p.status = ?'); args.push(status) }
       if (group && GROUPS[group]) { where.push(`p.status IN (${GROUPS[group].map(() => '?').join(',')})`); args.push(...GROUPS[group]) }

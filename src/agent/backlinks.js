@@ -88,15 +88,6 @@ export function createBacklinkChecker({ db, chrome, activity, status }) {
         try { await check(b) } catch (e) { activity.error('backlink_check_failed', `Backlink check failed: ${e.message}`) }
       }
       return due.length
-    },
-    setListingUrl(platformId, url) {
-      const u = new URL(url)
-      if (!/^https?:$/.test(u.protocol)) throw new Error('Only http(s) URLs')
-      const sub = db.prepare('SELECT id FROM submissions WHERE platform_id = ?').get(platformId)
-      if (!sub) throw new Error('No submission for this platform')
-      db.prepare(`UPDATE submissions SET listing_url = ?, updated_at = ? WHERE id = ?`).run(u.toString(), now(), sub.id)
-      db.prepare(`INSERT INTO backlinks (submission_id, page_url, next_check_at) VALUES (?, ?, ?)
-        ON CONFLICT(submission_id) DO UPDATE SET page_url = excluded.page_url, next_check_at = excluded.next_check_at`).run(sub.id, u.toString(), now())
     }
   }
 }

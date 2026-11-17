@@ -26,6 +26,7 @@
         <a href="#overview" data-view="overview">Overview</a>
         <a href="#platforms" data-view="platforms">Platforms</a>
         <a href="#queue" data-view="queue">Needs you <span id="badge-queue" class="badge" hidden></span></a>
+        <a href="#failed" data-view="failed">Failed <span id="badge-failed" class="badge" hidden></span></a>
         <a href="#company" data-view="company">DocStar profile <span id="badge-company" class="badge" hidden>!</span></a>
         <a href="#activity" data-view="activity">Activity</a>
         <a href="#integrations" data-view="integrations">Integrations</a>
@@ -42,6 +43,10 @@
     <main>
       <header class="topbar">
         <h1 id="view-title">Overview</h1>
+        <div class="sync" id="sync-state" title="Whether the agent is online, and when this dashboard last received its data">
+          <span id="sync-dot" class="dot"></span><span id="sync-text">Checking…</span>
+          <button id="pending-btn" class="btn small" hidden>Pending changes <span id="pending-count" class="badge"></span></button>
+        </div>
         <div class="controls">
           <span id="automation-state" class="pill">—</span>
           <button class="btn primary" data-automation="start">Start</button>
@@ -52,6 +57,11 @@
       </header>
       <div id="hosted-banner" class="banner" hidden>Hosted copy. Sign-ups and submissions run in the agent's Chrome on the Mac; here you can review data, approve listings and edit the profile.</div>
       <div id="toast" class="toast" role="status" hidden></div>
+      <div id="pending-panel" class="card pending-panel" hidden>
+        <div class="row" style="justify-content:space-between"><h2 style="margin:0">Changes made here</h2><button class="btn ghost small" id="pending-close">Close</button></div>
+        <p class="muted small">Each change is applied by the agent. "Pending" changes wait for it to come online; you see "Applied" only once it really ran.</p>
+        <ol id="pending-list" class="pending-list"></ol>
+      </div>
 
       <section id="view-overview" class="view">
         <div id="kpis" class="kpis"></div>
@@ -65,6 +75,7 @@
       <section id="view-platforms" class="view" hidden>
         <div class="toolbar">
           <input id="f-q" type="search" placeholder="Search name or domain">
+          <select id="f-group"><option value="">All platforms</option><option value="needs_you">Needs you</option><option value="failed">Failed</option><option value="added">Successfully added</option><option value="in_progress">In progress</option><option value="pipeline">Approved, not yet submitted</option></select>
           <select id="f-status"><option value="">All statuses</option></select>
           <select id="f-category"><option value="">All categories</option></select>
           <select id="f-pricing"><option value="">Any pricing</option><option>free</option><option>freemium</option><option>paid</option><option>unknown</option></select>
@@ -89,14 +100,19 @@
             </tr></thead>
             <tbody></tbody>
           </table>
-          <p id="platforms-empty" class="empty" hidden>No platforms yet. Import the seed list or add one; discovery comes in Phase 3.</p>
+          <div class="row pager"><span id="platforms-count" class="muted small"></span><span class="spacer"></span><button class="btn small" id="pg-prev">Previous</button><button class="btn small" id="pg-next">Next</button></div>
+          <p id="platforms-empty" class="empty" hidden>No platforms match these filters.</p>
         </div>
       </section>
 
       <section id="view-queue" class="view" hidden>
         <div class="card"><h2>Listings waiting for your approval</h2><p class="muted">Nothing is registered or published on a platform until you approve it here. You can edit the listing before approving.</p><div id="approvals"></div></div>
-        <div class="card" id="browser-queue-card" hidden><h2>Approved, waiting for the browser step</h2><p class="muted">These listings are approved. Registration and submission run in a browser outside this hosted copy.</p><div id="browser-queue"></div></div>
-        <div class="card"><h2>Tasks that need you</h2><p class="muted">CAPTCHAs, sign-ins and anything unclear. Do the step in Chrome, then press Resume.</p><div id="needs-you"></div></div>
+        <div class="card"><h2>Waiting for you</h2><p class="muted">CAPTCHAs, sign-ins, missing details and retries that ran out. Each says what happened, what to do and where; press Resume when done.</p><div id="needs-you"></div></div>
+        <div class="card" id="browser-queue-card"><h2>Approved, not yet submitted</h2><p class="muted">Every approved listing whose sign-up or submission has not finished, with the step it is at.</p><div id="browser-queue"></div></div>
+      </section>
+
+      <section id="view-failed" class="view" hidden>
+        <div class="card"><h2>Failures</h2><p class="muted">Every platform or run in a failed state, with the error, the step, when, and how many attempts were used. Retry runs it again from the right step.</p><div id="failed-list"></div></div>
       </section>
 
       <section id="view-company" class="view" hidden>
@@ -180,5 +196,18 @@
       </section>
     </main>
   </div>
+
+  <dialog id="manual-dialog" class="dialog">
+    <form method="dialog" id="manual-form" class="dialog-form">
+      <h2 id="manual-title">Mark as done manually</h2>
+      <p class="muted small">Record work done outside the agent. The platform moves to the right status and the backlink is checked at once.</p>
+      <label>Listing URL <input name="listingUrl" type="url" placeholder="https://platform.com/product/docstar"></label>
+      <label>Backlink page (if different from the listing) <input name="backlinkUrl" type="url" placeholder="optional"></label>
+      <label>Account email <input name="accountEmail" type="email" placeholder="support@docstar.io"></label>
+      <label>Signed up with <select name="loginMethod"><option value="email">Email</option><option value="google">Google</option><option value="github">GitHub</option></select></label>
+      <label>Notes <textarea name="notes" rows="3"></textarea></label>
+      <div class="row"><button class="btn primary" value="save">Save</button><button class="btn ghost" value="cancel" formnovalidate>Cancel</button></div>
+    </form>
+  </dialog>
 </body>
 </html>

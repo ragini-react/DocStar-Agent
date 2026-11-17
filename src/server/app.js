@@ -16,7 +16,7 @@ import { signupSlot } from '../engine/rateLimit.js'
 const SESSION_MS = 12 * 3600_000
 const COOKIE = 'docstar_session'
 
-export function createApp({ config, db, vault, activity, gmail, chrome, orchestrator, platforms, agent, status, views, maintenance, mirror = null }) {
+export function createApp({ config, db, vault, activity, gmail, chrome, orchestrator, platforms, agent, status, views, maintenance, manual, alerts = null, mirror = null, pusher = () => null }) {
   const app = express()
   const sessions = new Map() // token -> expiresAt; in memory, so a restart signs everyone out
   const loginAttempts = new Map() // ip -> [timestamps]
@@ -170,10 +170,13 @@ export function createApp({ config, db, vault, activity, gmail, chrome, orchestr
         return next()
       }
       if (/\/reveal$/.test(req.path)) return res.status(403).json({ error: 'Passwords stay on the Mac: reveal them in the local dashboard.' })
-      const id = mirror.queue(req.method, req.originalUrl, req.body)
+      // Recorded and shown as pending at once; "Applied" or "Failed: why" arrives when the agent has run it.
+      const command = mirror.queue(req.method, req.originalUrl, req.body)
       res.status(202).json({
-        queued: true, id,
-        message: mirror.online() ? 'Sent to the agent on the Mac: it runs in a few seconds.' : 'The Mac is offline: this runs when it reconnects.'
+        queued: true, id: command.id, command, duplicate: Boolean(command.duplicate),
+        message: command.duplicate ? `Already pending: ${command.label}` : mirror.online()
+          ? `Pending: ${command.label}. The agent applies it in a few seconds.`
+          : `Pending — will apply when the agent is online: ${command.label}`
       })
     })
   }
@@ -282,15 +285,40 @@ export function createApp({ config, db, vault, activity, gmail, chrome, orchestr
   app.get('/api/invariants', (req, res) => res.json(maintenance ? maintenance.invariants() : []))
   app.post('/api/maintenance/reconcile', wrap(async (req, res) => res.json({ fixes: maintenance.reconcile() })))
   app.post('/api/maintenance/sweep', wrap(async (req, res) => res.json(maintenance.sweep())))
+  // Any platform, whatever its status: a person records the listing (and the account) and the agent checks it.
   app.post('/api/platforms/:id/listing-url', wrap(async (req, res) => {
-    agent.backlinks.setListingUrl(Number(req.params.id), String(req.body?.url || ''))
-    res.json({ ok: true })
+    const { check, ...r } = manual.setListingUrl(Number(req.params.id), String(req.body?.url || ''))
+    res.json({ ...r, message: 'Listing URL saved; checking the backlink' })
+  }))
+  app.post('/api/platforms/:id/manual-complete', wrap(async (req, res) => {
+    const b = req.body || {}
+    const { check, ...r } = manual.complete(Number(req.params.id), { accountEmail: b.accountEmail, listingUrl: b.listingUrl, backlinkUrl: b.backlinkUrl, notes: b.notes, loginMethod: b.loginMethod })
+    res.json({ ...r, message: `Recorded as done (${label(r.status).toLowerCase()})` })
   }))
   app.post('/api/platforms/:id/check-backlink', wrap(async (req, res) => {
     const b = db.prepare(`SELECT b.* FROM backlinks b JOIN submissions s ON s.id = b.submission_id WHERE s.platform_id = ?`).get(Number(req.params.id))
     if (!b) return res.status(400).json({ error: 'No listing URL recorded for this platform yet' })
     res.json(await agent.backlinks.check(b))
   }))
+  // Sync state for the header on every page, and the Pending changes panel.
+  app.get('/api/sync', (req, res) => {
+    const hb = JSON.parse(getSetting(db, 'worker_heartbeat', 'null') || 'null')
+    const workerOnline = Boolean(hb && Date.now() - Date.parse(hb.at) < 90_000)
+    if (mirroring()) {
+      const m = mirror.info()
+      return res.json({ hosted: true, mirroring: true, agentOnline: m.online, lastSynced: m.lastRecords || m.lastPush, lastContact: m.lastPush, source: m.source, pending: m.pending, worker: m.worker })
+    }
+    const p = pusher()
+    res.json({ hosted: config.hosted, mirroring: false, agentOnline: workerOnline, worker: hb, mirrorTarget: p ? new URL(config.mirror.url).host : null,
+      lastSynced: p ? p.info().lastOk : null, mirrorFailing: p ? p.info().failures > 0 : false, failingSince: p?.info().failingSince ?? null, pending: 0 })
+  })
+  app.get('/api/commands', (req, res) => {
+    if (mirror) return res.json(mirror.commands({ limit: req.query.limit }))
+    // On the agent: the hosted dashboard's changes it applied, with their outcome.
+    const rows = db.prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'mirror_applied'`).get()
+      ? db.prepare(`SELECT id, CASE ok WHEN 1 THEN 'applied' ELSE 'failed' END state, message result, status http_status, at applied_at FROM mirror_applied ORDER BY at DESC LIMIT 50`).all() : []
+    res.json(rows)
+  })
 
   app.get('/api/tasks', (req, res) => res.json(db.prepare(`SELECT t.id, t.type, t.state, t.step, t.attempts, t.last_error, t.updated_at, p.name platform
     FROM automation_tasks t LEFT JOIN platforms p ON p.id = t.platform_id ${req.query.state ? 'WHERE t.state = ?' : ''} ORDER BY t.updated_at DESC LIMIT 200`)
@@ -307,9 +335,12 @@ export function createApp({ config, db, vault, activity, gmail, chrome, orchestr
     const ping = setInterval(() => res.write(': ping\n\n'), 25_000)
     // Hosted mirror: fresh numbers from the Mac arrived; open dashboards reload what they show.
     const synced = e => res.write(`event: sync\ndata: ${JSON.stringify(e)}\n\n`)
+    // A change made on the hosted dashboard moved on (queued → sent → applied | failed).
+    const command = e => res.write(`event: command\ndata: ${JSON.stringify(e)}\n\n`)
     activity.feed.on('entry', send)
     activity.feed.on('sync', synced)
-    req.on('close', () => { clearInterval(ping); activity.feed.off('entry', send); activity.feed.off('sync', synced) })
+    activity.feed.on('command', command)
+    req.on('close', () => { clearInterval(ping); activity.feed.off('entry', send); activity.feed.off('sync', synced); activity.feed.off('command', command) })
   })
 
   // Chrome
@@ -346,7 +377,7 @@ export function createApp({ config, db, vault, activity, gmail, chrome, orchestr
 
   // Credentials: listed without secrets; one revealed only after the admin password is typed again.
   app.get('/api/credentials', (req, res) => res.json(db.prepare(`SELECT a.id, p.name platform, p.domain, a.email, a.login_method, a.status,
-      a.created_at, (c.id IS NOT NULL) has_password, c.revealed_at
+      a.created_at, a.signup_completed_at, a.signup_inferred, (c.id IS NOT NULL) has_password, c.revealed_at
     FROM accounts a JOIN platforms p ON p.id = a.platform_id LEFT JOIN credentials c ON c.account_id = a.id ORDER BY p.name`).all()))
   app.post('/api/credentials/:accountId/reveal', wrap(async (req, res) => {
     if (!checkPassword(req, req.body?.password)) {
