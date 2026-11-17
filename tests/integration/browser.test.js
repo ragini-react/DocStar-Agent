@@ -16,6 +16,7 @@ import { startMockPlatform } from '../fixtures/mockPlatform.mjs'
 import { createSubmitTask } from '../../src/agent/submitTask.js'
 import { createListingFinder } from '../../src/agent/listingFinder.js'
 import { createPlaybooks } from '../../src/agent/playbooks.js'
+import { createEmailVerifier } from '../../src/integrations/emailVerifier.js'
 import { setup } from '../helpers/setup.js'
 
 const CHROME = process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
@@ -56,6 +57,13 @@ function scriptedAi({ skipTaglineFirst = false, onStep = null } = {}) {
       const line = re => lines.find(l => re.test(l)) || ''
       if (/SUBMIT RESULT: SUCCESS/.test(message)) return act('complete', null, null, 'submitted')
       if (ref(/button "Continue with Google"/)) return act('click', ref(/button "Continue with Google"/))
+      if (ref(/link "Sign up with email"/)) return act('click', ref(/link "Sign up with email"/))
+      if (/TITLE: Create an account/.test(message)) {
+        if (/empty/.test(line(/email "Email/))) return act('type', ref(/email "Email/), '{{account.email}}')
+        if (/empty/.test(line(/password "Password/))) return act('type', ref(/password "Password/), '{{account.password}}')
+        return act('click', ref(/button "Create account"/))
+      }
+      if (/TITLE: Check your email/.test(message)) return act('verify_email')
       if (ref(/link "Submit your tool"/)) return act('click', ref(/link "Submit your tool"/))
       if (/TITLE: Submit your tool/.test(message)) {
         if (/empty/.test(line(/"Tool name/))) return act('type', ref(/"Tool name/), '{{listing.title}}')
@@ -73,7 +81,7 @@ function scriptedAi({ skipTaglineFirst = false, onStep = null } = {}) {
   }
 }
 
-function harness({ mock, ai, chrome, dir }) {
+function harness({ mock, ai, chrome, dir, emailWindowMin = null }) {
   const t = setup({ browser: true })
   const { platform } = t.platforms.create({ name: 'Mock', url: mock.platformUrl })
   const id = platform.id
@@ -83,10 +91,14 @@ function harness({ mock, ai, chrome, dir }) {
   writeFileSync(path.join(dir, 'assets', 'docstar-logo.png'), PNG)
   const facts = { name: 'DocStar', website: 'https://docstar.io/', tagline: 'API docs your agent writes', short_description: 'x', long_description: 'y', category: 'API documentation', logo_url: '' }
   const playbooks = createPlaybooks({ db: t.db })
+  const vault = { encrypt: s => s, decrypt: s => s }
+  // Gmail, mocked: the platform's outbox, searched exactly as the real search is (domain, since).
+  const gmail = { searchPlatform: async ({ since }) => mock.state.outbox.filter(e => e.receivedAt >= since).reverse() }
+  const verifier = createEmailVerifier({ db: t.db, gmail, activity: t.activity, vault, status: t.status, playbooks, pollMs: 100, windowMin: emailWindowMin || 0.05 })
   const submit = createSubmitTask({
-    db: t.db, vault: { encrypt: s => s, decrypt: s => s }, ai, chrome, gmail: null, activity: t.activity, status: t.status,
+    db: t.db, vault, ai, chrome, gmail, activity: t.activity, status: t.status,
     company: { approved: () => facts }, listings: { get: () => ({ title: 'DocStar', tagline: 'API docs your agent writes', short_description: 'x', long_description: 'y', tags: ['api'], status: 'approved' }) },
-    config: { dbPath: path.join(dir, 'x.db') }, finder: createListingFinder({ allowPrivate: true }), playbooks,
+    config: { dbPath: path.join(dir, 'x.db') }, finder: createListingFinder({ allowPrivate: true }), playbooks, verifier,
     opts: { authHosts: ['localhost'], maxSteps: 25 }
   })
   t.orchestrator.register('submit', submit, { browser: true, start: 'submitting', entry: 'approved', exhausted: 'needs_you', failed: 'submission_failed' })
@@ -165,5 +177,40 @@ test('Google asks for a password (profile not signed in): one clear needs-you it
     assert.match(ny.what, /not signed in/)
     assert.match(ny.todo, /Sign in to Google/)
     assert.equal(t.views.needsYou().length, 1)
+  } finally { t.orchestrator.shutdown(); await chrome.close(); mock.close() }
+})
+
+test('email sign-up: the verification email is found in Gmail, its link opened in the agent\'s Chrome, the task goes on', { skip, timeout: 120_000 }, async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'docstar-it-'))
+  const mock = await startMockPlatform({ emailSignup: true })
+  const chrome = testChrome(dir)
+  const t = harness({ mock, ai: scriptedAi(), chrome, dir })
+  try {
+    await t.orchestrator._tick()
+    const task = t.db.prepare('SELECT state, last_error FROM automation_tasks').get()
+    assert.equal(task.state, 'done', task.last_error)
+    assert.equal(t.status.get(t.id).status, 'submitted')
+    const acc = t.db.prepare('SELECT login_method, status, signup_completed_at FROM accounts WHERE platform_id = ?').get(t.id)
+    assert.deepEqual([acc.login_method, acc.status, Boolean(acc.signup_completed_at)], ['email', 'active', true])
+    assert.equal(t.db.prepare(`SELECT status FROM email_verifications WHERE platform_id = ?`).get(t.id).status, 'verified')
+    const used = t.db.prepare(`SELECT sender, subject, purpose FROM emails_used WHERE platform_id = ?`).get(t.id)
+    assert.deepEqual([used.subject, used.purpose], ['Confirm your email', 'verification'])
+    // The link (with its token) is never logged.
+    assert.ok(!t.db.prepare(`SELECT 1 FROM activity_logs WHERE message LIKE '%token=%' OR meta LIKE '%token=%'`).get())
+    const path_ = t.db.prepare(`SELECT to_status FROM platform_transitions WHERE platform_id = ? ORDER BY id`).all(t.id).map(r => r.to_status)
+    for (const s of ['registering', 'email_verification_pending', 'registered', 'submitting', 'submitted']) assert.ok(path_.includes(s), s)
+  } finally { t.orchestrator.shutdown(); await chrome.close(); mock.close() }
+})
+
+test('no email at first: the agent presses resend once, then verifies', { skip, timeout: 120_000 }, async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'docstar-it-'))
+  const mock = await startMockPlatform({ emailSignup: true, emailOnlyOnResend: true })
+  const chrome = testChrome(dir)
+  const t = harness({ mock, ai: scriptedAi(), chrome, dir, emailWindowMin: 0.08 })
+  try {
+    await t.orchestrator._tick()
+    assert.equal(mock.state.resends, 1)
+    assert.ok(t.db.prepare(`SELECT 1 FROM activity_logs WHERE event = 'verification_resent'`).get())
+    assert.equal(t.db.prepare('SELECT state, last_error FROM automation_tasks').get().state, 'done')
   } finally { t.orchestrator.shutdown(); await chrome.close(); mock.close() }
 })

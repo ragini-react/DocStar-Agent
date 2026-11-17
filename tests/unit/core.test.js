@@ -163,7 +163,7 @@ test('verification links: only https on the platform domain, prefers verify link
     <a href="https://example.com/blog">Blog</a>
     <a href="http://example.com/confirm?t=2">Confirm (http)</a>
     <a href="https://app.example.com/account/confirm?t=3&amp;u=4">Confirm your email</a>` }
-  assert.deepEqual(pickVerificationLink(body, 'example.com'), { link: 'https://app.example.com/account/confirm?t=3&u=4', host: 'app.example.com' })
+  assert.deepEqual(pickVerificationLink(body, 'example.com'), { link: 'https://app.example.com/account/confirm?t=3&u=4', host: 'app.example.com', tracker: false })
   assert.equal(pickVerificationLink({ html: '<a href="https://example.com/blog">Blog</a>' }, 'example.com'), null)
   assert.equal(pickVerificationLink({ plain: 'Verify: https://example.com.evil.io/verify?x' }, 'example.com'), null)
   assert.equal(senderDomain('Google <no-reply@accounts.google.com>'), 'accounts.google.com')

@@ -5,8 +5,9 @@
 //   auth (localhost): a Google-like account chooser and consent screen; the callback closes the popup.
 import http from 'node:http'
 
-export async function startMockPlatform({ alreadyListed = false, email = 'support@docstar.io', signedIn = true } = {}) {
-  const state = { submissions: [], posts: 0, sessions: new Set(), listed: alreadyListed, emailsSent: 0 }
+export async function startMockPlatform({ alreadyListed = false, email = 'support@docstar.io', signedIn = true, emailSignup = false, emailOnlyOnResend = false } = {}) {
+  const state = { submissions: [], posts: 0, sessions: new Set(), listed: alreadyListed, emailsSent: 0, outbox: [], pending: new Map(), resends: 0 }
+  const sendMail = () => { const token = Math.random().toString(36).slice(2); state.pending.set(token, true); state.outbox.push({ id: `m${state.outbox.length + 1}`, from: 'Mock <noreply@mock.test>', subject: 'Confirm your email', receivedAt: new Date().toISOString(), body: { html: `<p>Welcome</p><a href="${platformUrl}/verify?token=${token}">Confirm your email</a> <a href="${platformUrl}/unsubscribe">Unsubscribe</a>` } }); state.emailsSent++ }
   const page = (title, body, script = '') => `<!doctype html><html><head><title>${title}</title></head><body><h1>${title}</h1>${body}${script ? `<script>${script}</script>` : ''}</body></html>`
   const listen = srv => new Promise(r => srv.listen(0, '127.0.0.1', () => r(srv.address().port)))
   let platformUrl, authUrl
@@ -34,6 +35,18 @@ export async function startMockPlatform({ alreadyListed = false, email = 'suppor
       const send = (html, code = 200, headers = {}) => { res.writeHead(code, { 'Content-Type': 'text/html', ...headers }); res.end(html) }
       const json = (obj, code = 200) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)) }
       if (url.pathname === '/robots.txt') return send('User-agent: *\nDisallow: /admin\n')
+      if (url.pathname === '/' && emailSignup && !signed) return send(page('Mock Platform', '<a href="/signup">Sign up with email</a>'))
+      if (url.pathname === '/signup' && req.method === 'GET') return send(page('Create an account', '<form method="post"><label>Email <input name="email" type="email" required></label><label>Password <input name="password" type="password" required></label><button type="submit">Create account</button></form>'))
+      if (url.pathname === '/signup') { if (!emailOnlyOnResend) sendMail(); return send(page('Check your email', '<p>We sent you a confirmation link.</p><form method="post" action="/resend"><button type="submit">Resend email</button></form>')) }
+      if (url.pathname === '/resend') { state.resends++; sendMail(); return send(page('Check your email', '<p>Sent again.</p>')) }
+      if (url.pathname === '/verify') {
+        const token = url.searchParams.get('token')
+        if (!state.pending.has(token)) return send(page('Link expired', '<p>This link is invalid or expired.</p>'))
+        state.pending.delete(token)
+        const id = Math.random().toString(36).slice(2)
+        state.sessions.add(id)
+        return send('', 302, { Location: '/dashboard', 'Set-Cookie': `sid=${id}; Path=/` })
+      }
       if (url.pathname === '/') return send(page('Mock Platform', signed ? '<a href="/dashboard">Dashboard</a>'
         : `<p>List your developer tool.</p><button id="g" onclick="window.open('${authUrl}/o/oauth2/chooser?redirect=${encodeURIComponent(platformUrl + '/oauth/callback')}', 'google', 'width=500,height=600')">Continue with Google</button>`))
       if (url.pathname === '/oauth/callback') {
