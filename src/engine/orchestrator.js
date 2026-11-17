@@ -433,12 +433,12 @@ export function createOrchestrator({ db, activity, chrome, status, browser = tru
     },
 
     /** Queue a task unless an unfinished or finished one of the same type exists for that platform (idempotent). */
-    enqueue(platformId, type, { runAfter = null, maxAttempts = null } = {}) {
+    enqueue(platformId, type, { runAfter = null, maxAttempts = null, checkpoint = null } = {}) {
       const existing = db.prepare(`SELECT id, state FROM automation_tasks WHERE platform_id IS ? AND type = ?
         AND state IN (${[...ACTIVE, 'done'].map(() => '?').join(',')})`).get(platformId, type, ...ACTIVE, 'done')
       if (existing) return { created: false, task: existing }
-      const task = db.prepare(`INSERT INTO automation_tasks (platform_id, type, run_after, max_attempts, idempotency_key) VALUES (?, ?, ?, ?, ?) RETURNING id, state`)
-        .get(platformId, type, runAfter, maxAttempts, `${type}:${platformId ?? 'none'}`)
+      const task = db.prepare(`INSERT INTO automation_tasks (platform_id, type, run_after, max_attempts, idempotency_key, checkpoint) VALUES (?, ?, ?, ?, ?, ?) RETURNING id, state`)
+        .get(platformId, type, runAfter, maxAttempts, `${type}:${platformId ?? 'none'}`, checkpoint ? JSON.stringify(checkpoint) : null)
       wake()
       return { created: true, task }
     },
@@ -502,7 +502,7 @@ export function createOrchestrator({ db, activity, chrome, status, browser = tru
         if (to) status.transition(platformId, to, { actor, reason: 'retry requested' })
         // The earlier finished run of this step stops counting, so the step runs again.
         db.prepare(`UPDATE automation_tasks SET state = 'cancelled', updated_at = ? WHERE platform_id = ? AND type = ? AND state = 'done'`).run(now(), platformId, type)
-        this.enqueue(platformId, type)
+        this.enqueue(platformId, type, type === 'qualify' ? { checkpoint: { force: true } } : {})
       })()
       activity.info('platform_retry', `${p.name}: retry queued (${type})`, { platformId })
       return { ok: true, queued: type }

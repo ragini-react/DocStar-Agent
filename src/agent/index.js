@@ -49,7 +49,8 @@ export function createAgent({ db, vault, activity, chrome, gmail, orchestrator, 
     for (const id of r.added) orchestrator.enqueue(id, 'qualify')
   }, { exhausted: null, failed: null })
 
-  orchestrator.register('qualify', task => qualifier.run(task.platform_id), {
+  // A re-evaluation a person asked for (POST /qualify) scores again; otherwise a recent score is reused.
+  orchestrator.register('qualify', task => qualifier.run(task.platform_id, { force: Boolean(JSON.parse(task.checkpoint || '{}').force) }), {
     start: 'qualifying', entry: 'discovered', exhausted: 'evaluation_failed', failed: 'evaluation_failed', ownsInProgress: s => s === 'qualifying'
   })
   orchestrator.register('prepare', (task, ctx) => qualifier.prepare(task.platform_id, ctx), { entry: 'qualified', exhausted: 'needs_you', failed: 'needs_you' })
@@ -93,7 +94,7 @@ export function createAgent({ db, vault, activity, chrome, gmail, orchestrator, 
     for (const { id } of db.prepare(`SELECT p.id FROM platforms p WHERE p.status = 'evaluation_failed' AND p.status_changed_at < ?
         AND (SELECT COUNT(*) FROM automation_tasks t WHERE t.platform_id = p.id AND t.type = 'qualify') < 4`).all(new Date(Date.now() - 86400_000).toISOString())) {
       db.prepare(`UPDATE automation_tasks SET state = 'cancelled' WHERE platform_id = ? AND type = 'qualify' AND state = 'done'`).run(id)
-      if (orchestrator.enqueue(id, 'qualify').created) queued++
+      if (orchestrator.enqueue(id, 'qualify', { checkpoint: { force: true } }).created) queued++
     }
     if (listings.ready()) {
       for (const { id } of db.prepare(`SELECT p.id FROM platforms p WHERE p.status IN ('qualified','listing_drafted')`).all()) {

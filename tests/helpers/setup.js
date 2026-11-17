@@ -22,7 +22,7 @@ export function setup({ browser = false } = {}) {
 
 /** A platform walked to `status` through allowed transitions, with the rows that status implies. */
 export function platformAt(t, status, { name = `P${Math.random().toString(36).slice(2, 7)}`, account = null, submission = null } = {}) {
-  const { platform } = t.platforms.create({ name, url: `${name.toLowerCase()}.io` })
+  const { platform } = t.platforms.create({ name, url: `${name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}.io` })
   const id = platform.id
   if (submission) t.db.prepare(`INSERT INTO submissions (platform_id, status) VALUES (?, ?)`).run(id, submission)
   if (account) t.db.prepare(`INSERT INTO accounts (platform_id, email, login_method, status) VALUES (?, 'support@docstar.io', 'google', ?)`).run(id, account)

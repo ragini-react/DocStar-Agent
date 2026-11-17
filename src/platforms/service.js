@@ -2,6 +2,7 @@
 // decisions (through the status writer), the seed list and CSV. Counts and grouped lists live in views.js.
 import { now } from '../db/index.js'
 import { STATUSES, label } from '../engine/stateMachine.js'
+import { SHARED_HOSTS, cleanName, normalizeHost, registrableDomain, siteKey } from './domains.js'
 
 export { STATUSES }
 
@@ -28,9 +29,12 @@ export function normalizeUrl(input) {
   let url
   try { url = new URL(/^https?:\/\//i.test(input) ? input : `https://${input}`) } catch { throw new Error('Not a valid URL') }
   if (!['http:', 'https:'].includes(url.protocol)) throw new Error('Only http(s) URLs')
-  const domain = url.hostname.toLowerCase().replace(/^www\./, '')
-  if (!domain.includes('.')) throw new Error('Not a valid domain')
-  return { url: url.origin + '/', domain }
+  const host = normalizeHost(url.hostname)
+  if (!host.includes('.')) throw new Error('Not a valid domain')
+  // A site hosted on a shared host (github.com/…) is identified by its path owner too.
+  const key = siteKey(url.toString())
+  const shared = SHARED_HOSTS.has(host) || SHARED_HOSTS.has(registrableDomain(host))
+  return { url: shared ? `${url.origin}/${key.split('/')[1] || ''}` : url.origin + '/', domain: shared ? key : host, siteKey: key }
 }
 
 const EDITABLE = ['name', 'submission_url', 'pricing', 'pricing_notes', 'registration_requirements', 'submission_requirements',
@@ -66,17 +70,19 @@ export function createPlatforms({ db, activity, status, orchestrator = null }) {
     return db.prepare(`SELECT p.*, ${LIST_FIELDS} ${FROM} WHERE p.id = ?`).get(id) ?? null
   }
 
-  function create({ name, url, category, source = 'manual', notes = null, siteKey = null }) {
-    if (!name?.trim()) throw new Error('Name is required')
+  /** `url` should already be the final URL after redirects (see resolveFinalUrl). Duplicates are found by registrable domain. */
+  function create({ name, url, category, source = 'manual', notes = null }) {
+    const clean = cleanName(name)
+    if (!clean) throw new Error('Name is required')
     if (!SOURCE.test(source)) throw new Error(`Bad source "${source}"`)
     const n = normalizeUrl(String(url || ''))
-    const existing = db.prepare('SELECT id, name FROM platforms WHERE domain = ? OR (site_key IS NOT NULL AND site_key = ?)').get(n.domain, siteKey ?? n.domain)
-    if (existing) return { created: false, platform: get(existing.id), reason: `${existing.name} is already tracked` }
+    const existing = db.prepare('SELECT id, name FROM platforms WHERE domain = ? OR site_key = ?').get(n.domain, n.siteKey)
+    if (existing) return { created: false, platform: get(existing.id), reason: `${existing.name} is already tracked (same site: ${n.siteKey})` }
     const row = db.prepare(`INSERT INTO platforms (name, url, domain, site_key, category_id, source, notes, status_changed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`)
-      .get(name.trim(), n.url, n.domain, siteKey ?? n.domain, categoryId(category), source, notes, now())
+      .get(clean, n.url, n.domain, n.siteKey, categoryId(category), source, notes, now())
     db.prepare(`INSERT INTO platform_transitions (platform_id, from_status, to_status, reason, actor) VALUES (?, NULL, 'discovered', ?, ?)`)
       .run(row.id, `added (${source})`, source === 'manual' ? 'operator' : 'agent')
-    activity.info('platform_discovered', `${name.trim()} added (${n.domain}, ${source})`, { platformId: row.id })
+    activity.info('platform_discovered', `${clean} added (${n.domain}, ${source})`, { platformId: row.id })
     return { created: true, platform: get(row.id) }
   }
 

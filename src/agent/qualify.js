@@ -43,6 +43,21 @@ const QUALIFY_SLICE = 5000
 /** The one threshold rule: a score at or above the minimum qualifies. */
 export const qualifies = (score, min) => Number(score) >= Number(min)
 
+// A fixed rubric: the overall score is computed from the parts, never taken from the model's own guess, so the same
+// assessment always gives the same number.
+export const RUBRIC = { relevance: 0.30, domain_reputation: 0.15, audience_quality: 0.15, credibility: 0.10, indexability: 0.10, referral_potential: 0.10, backlink_quality: 0.10 }
+export const rubricScore = q => Math.round(Object.entries(RUBRIC).reduce((sum, [k, w]) => sum + w * Math.max(0, Math.min(100, Number(q[k]) || 0)), 0))
+const MIN_TEXT = 800 // less readable text than this is not enough to judge a site
+const CACHE_DAYS = 30
+
+/** Pure: an evaluation that is a failure to evaluate (too little to read, or the model saw nothing) rather than a low score. */
+export function evaluationFailed(q, textChars) {
+  if (textChars < MIN_TEXT) return `only ${textChars} characters of the site could be read`
+  const parts = Object.keys(RUBRIC).map(k => Number(q[k]) || 0)
+  if (parts.every(v => v <= 5)) return 'every score came back near zero: the pages gave the model nothing to judge'
+  return null
+}
+
 export function createQualifier({ db, ai, activity, chrome, listings, approvals, orchestrator, status, autoApproval = null }) {
   // Reading pages in Chrome is optional: without it, blocked sites are read over HTTP only.
   async function read(url) {
@@ -73,9 +88,20 @@ export function createQualifier({ db, ai, activity, chrome, listings, approvals,
   }
 
   return {
-    async run(platformId) {
+    /** `force`: a person asked for a re-evaluation (otherwise a recent score for this domain is reused). */
+    async run(platformId, { force = false } = {}) {
       const p = db.prepare('SELECT * FROM platforms WHERE id = ?').get(platformId)
       if (!p) throw new Error('platform gone')
+      const minScore = Number(getSetting(db, 'min_quality_score', 55))
+      // Never re-scored without a reason: a score from the last 30 days is the score.
+      const cached = !force && db.prepare(`SELECT * FROM platform_scores WHERE platform_id = ? AND scored_at > ? AND method LIKE 'ai:%' ORDER BY scored_at DESC, id DESC LIMIT 1`)
+        .get(p.id, new Date(Date.now() - CACHE_DAYS * 86400_000).toISOString())
+      if (cached && cached.overall != null && p.pricing !== 'unknown') {
+        const ok = qualifies(cached.overall, minScore)
+        status.transition(p.id, ok ? 'qualified' : 'rejected', { statusReason: ok ? null : 'low_score', reason: `score ${cached.overall} (kept from ${cached.scored_at.slice(0, 10)})` })
+        if (ok) orchestrator.enqueue(p.id, 'prepare')
+        return { status: ok ? 'qualified' : 'rejected', reason: 'cached score', score: cached.overall }
+      }
       const home = await read(p.url)
       // The same site under a second name (g2crowd.com redirects to g2.com): one platform, worked on once.
       const landed = (() => { try { return new URL(home.url).hostname.toLowerCase().replace(/^www\./, '') } catch { return p.domain } })()
@@ -94,7 +120,12 @@ export function createQualifier({ db, ai, activity, chrome, listings, approvals,
       const extra = []
       for (const u of urls.slice(0, 2)) extra.push(await read(u))
       const pages = [home, ...extra].filter(x => x.text)
-      if (!pages.length) throw new Error(`could not read ${p.domain} (HTTP ${home.status})`)
+      const textChars = pages.reduce((n, x) => n + x.text.trim().length, 0)
+      if (!pages.length || textChars < MIN_TEXT) {
+        // Not a low score: nothing to judge. Recorded as such and tried again later (feedQueue: after a day).
+        status.transition(p.id, 'evaluation_failed', { statusReason: 'evaluation_failed', reason: `could not read enough of ${p.domain} (HTTP ${home.status}, ${textChars} characters)` })
+        return { status: 'evaluation_failed', reason: 'too little data', score: null }
+      }
 
       const q = await ai.json({
         threadId: `qualify-${p.domain}-${Date.now().toString(36)}`,
@@ -103,7 +134,15 @@ export function createQualifier({ db, ai, activity, chrome, listings, approvals,
         message: pages.map(x => `### ${x.url} (HTTP ${x.status}${x.viaChrome ? ', read in Chrome' : ''})\n${x.text.slice(0, QUALIFY_SLICE)}`).join('\n\n')
       })
 
-      const minScore = Number(getSetting(db, 'min_quality_score', 55))
+      const modelOverall = q.overall
+      q.overall = rubricScore(q)
+      const failed = evaluationFailed(q, textChars)
+      if (failed) {
+        db.prepare(`INSERT INTO platform_scores (platform_id, overall, model_overall, method, evidence, reason) VALUES (?, NULL, ?, 'ai:claude-sonnet-5-5', ?, ?)`)
+          .run(p.id, modelOverall, JSON.stringify(pages.map(x => x.url)), `evaluation failed: ${failed}`)
+        status.transition(p.id, 'evaluation_failed', { statusReason: 'evaluation_failed', reason: failed })
+        return { status: 'evaluation_failed', reason: failed, score: null }
+      }
       let result, reason, code = null
       if (!q.legitimate) [result, reason, code] = ['rejected', 'not a legitimate platform', 'not_legitimate']
       else if (q.listing_requires_payment || (q.pricing === 'paid' && !q.free_listing_available)) [result, reason, code] = ['paid_skipped', q.pricing_notes || 'listing requires payment', 'paid_only']
@@ -115,9 +154,10 @@ export function createQualifier({ db, ai, activity, chrome, listings, approvals,
       const catId = db.prepare('SELECT id FROM platform_categories WHERE slug = ?').get(q.category)?.id ?? null
       db.transaction(() => {
         db.prepare(`INSERT INTO platform_scores (platform_id, relevance, domain_reputation, audience_quality, credibility, indexability,
-            referral_potential, backlink_quality, overall, seo_value, method, evidence)
-          VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`).run(p.id, q.relevance, q.domain_reputation, q.audience_quality, q.credibility, q.indexability,
-          q.referral_potential, q.backlink_quality, q.overall, q.seo_value, 'ai:claude-sonnet-5-5', JSON.stringify(pages.map(x => x.url)))
+            referral_potential, backlink_quality, overall, model_overall, seo_value, method, evidence, reason)
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(p.id, q.relevance, q.domain_reputation, q.audience_quality, q.credibility, q.indexability,
+          q.referral_potential, q.backlink_quality, q.overall, modelOverall, q.seo_value, 'ai:claude-sonnet-5-5', JSON.stringify(pages.map(x => x.url)),
+          force ? 're-evaluation requested' : 'first evaluation')
         db.prepare(`UPDATE platforms SET category_id = COALESCE(?, category_id), submission_url = COALESCE(NULLIF(?, ''), submission_url),
             pricing = ?, pricing_notes = ?, registration_requirements = ?, submission_requirements = ?, backlink_availability = ?,
             automation_policy = ?, domain_reputation = ?, reputation_source = 'ai estimate from site content',

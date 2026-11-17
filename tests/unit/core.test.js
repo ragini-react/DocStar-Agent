@@ -172,7 +172,8 @@ test('verification links: only https on the platform domain, prefers verify link
 test('CSV cells cannot become formulas; URLs normalise to one domain', () => {
   assert.equal(csvCell('=HYPERLINK("x")'), `"'=HYPERLINK(""x"")"`)
   assert.equal(csvCell('a,b'), '"a,b"')
-  assert.deepEqual(normalizeUrl('WWW.Example.com/path'), { url: 'https://www.example.com/', domain: 'example.com' })
+  assert.deepEqual(normalizeUrl('WWW.Example.com/path'), { url: 'https://www.example.com/', domain: 'example.com', siteKey: 'example.com' })
+  assert.deepEqual(normalizeUrl('https://github.com/thechangelog/nightly'), { url: 'https://github.com/thechangelog', domain: 'github.com/thechangelog', siteKey: 'github.com/thechangelog' })
   assert.throws(() => normalizeUrl('javascript:alert(1)'))
 })
 

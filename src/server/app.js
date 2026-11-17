@@ -13,6 +13,7 @@ import { label, LABELS, OTHER_LABELS, STATUSES } from '../engine/stateMachine.js
 import { parseNeedsYou } from '../engine/status.js'
 import { signupSlot } from '../engine/rateLimit.js'
 import { toCsv } from '../platforms/service.js'
+import { resolveFinalUrl } from '../platforms/domains.js'
 
 const SESSION_MS = 12 * 3600_000
 const COOKIE = 'docstar_session'
@@ -219,7 +220,10 @@ export function createApp({ config, db, vault, activity, gmail, chrome, orchestr
     })
   })
   app.post('/api/platforms', wrap(async (req, res) => {
-    const r = platforms.create({ name: req.body?.name, url: req.body?.url, category: req.body?.category, notes: req.body?.notes })
+    // The final domain after redirects is what is stored and compared (g2crowd.com → g2.com).
+    const raw = String(req.body?.url || '')
+    const final = await resolveFinalUrl(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`).catch(() => raw)
+    const r = platforms.create({ name: req.body?.name, url: final, category: req.body?.category, notes: req.body?.notes })
     res.status(r.created ? 201 : 409).json(r)
   }))
   app.patch('/api/platforms/:id', wrap(async (req, res) => res.json(platforms.update(Number(req.params.id), req.body || {}))))
@@ -265,7 +269,7 @@ export function createApp({ config, db, vault, activity, gmail, chrome, orchestr
       // Re-evaluating on request: the earlier evaluation stops counting as the one finished qualify task.
       db.prepare(`UPDATE automation_tasks SET state = 'cancelled', updated_at = ? WHERE platform_id = ? AND type = 'qualify' AND state IN ('done','failed')`).run(now(), id)
     })()
-    res.json(orchestrator.enqueue(id, 'qualify'))
+    res.json(orchestrator.enqueue(id, 'qualify', { checkpoint: { force: true } }))
   }))
   app.post('/api/platforms/:id/retry', wrap(async (req, res) => res.json(orchestrator.retryPlatform(Number(req.params.id)))))
   app.post('/api/platforms/:id/resume', wrap(async (req, res) => res.json(orchestrator.resumePlatform(Number(req.params.id)))))
