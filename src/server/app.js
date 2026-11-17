@@ -12,6 +12,7 @@ import { getSetting, now, setSetting } from '../db/index.js'
 import { label, LABELS, OTHER_LABELS, STATUSES } from '../engine/stateMachine.js'
 import { parseNeedsYou } from '../engine/status.js'
 import { signupSlot } from '../engine/rateLimit.js'
+import { toCsv } from '../platforms/service.js'
 
 const SESSION_MS = 12 * 3600_000
 const COOKIE = 'docstar_session'
@@ -280,6 +281,23 @@ export function createApp({ config, db, vault, activity, gmail, chrome, orchestr
     res.json(platforms.update(Number(req.params.id), { status: 'rejected', note: req.body?.note || null, reason: 'operator' }))
   }))
   app.get('/api/needs-you', (req, res) => res.json(views.needsYou()))
+  app.get('/api/added', (req, res) => res.json(views.added()))
+  app.get('/api/export/added.csv', (req, res) => {
+    const a = views.added()
+    const d = t => (t ? t.slice(0, 10) : '')
+    const ms = (r, k) => d(r.timeline.find(x => x.key === k)?.at)
+    const rows = [...a.live.map(r => ({ ...r, group: 'Live with backlink' })), ...a.published.map(r => ({ ...r, group: 'Published, backlink not found yet' })),
+      ...a.awaiting.map(r => ({ ...r, group: 'Submitted, awaiting platform review' }))]
+    const cols = [['Group', 'group'], ['Platform', 'name'], ['Domain', 'domain'], ['Listing URL', 'listing_url'], ['Backlink page', 'backlink_page'],
+      ['Link', r => (r.backlink_status === 'live' ? (r.is_dofollow ? 'dofollow' : r.rel || 'nofollow') : '')], ['Anchor text', 'anchor_text'],
+      ['Found', 'found'], ['First verified', r => d(r.first_seen_at)], ['Last re-verified', r => d(r.last_checked_at)], ['Account', 'account_email'],
+      ['Signed up with', r => (r.login_method ? label(r.login_method) : '')], ['Submitted', r => d(r.submitted_at)], ['Days waiting', 'waitingDays'],
+      ['Discovered', r => ms(r, 'discovered')], ['Qualified', r => ms(r, 'qualified')], ['Approved', r => ms(r, 'approved')], ['Account created', r => ms(r, 'registered')],
+      ['Published', r => ms(r, 'published')], ['Live', r => ms(r, 'live')], ['Added by', r => (r.manual ? 'a person' : 'the agent')]]
+    res.set({ 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="docstar-successfully-added-${now().slice(0, 10)}.csv"` })
+    res.send('\ufeff' + toCsv(cols, rows))
+    activity.info('csv_exported', 'Successfully added exported to CSV')
+  })
   app.get('/api/failed', (req, res) => res.json(views.failed()))
   app.get('/api/pipeline', (req, res) => res.json(views.approvedPipeline()))
   app.get('/api/invariants', (req, res) => res.json(maintenance ? maintenance.invariants() : []))

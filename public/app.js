@@ -125,7 +125,7 @@ $('#login-form').addEventListener('submit', run(async e => {
 $('#logout').addEventListener('click', run(async () => { await api('/api/logout', { method: 'POST' }); showLogin() }))
 
 // ---------- navigation ----------
-const TITLES = { overview: 'Overview', platforms: 'Platforms', queue: 'Needs you', failed: 'Failed', company: 'DocStar profile', activity: 'Activity',
+const TITLES = { overview: 'Overview', platforms: 'Platforms', queue: 'Needs you', added: 'Successfully added', failed: 'Failed', company: 'DocStar profile', activity: 'Activity',
   integrations: 'Integrations', credentials: 'Credentials', settings: 'Settings' }
 const loaders = {}
 const currentView = () => { const v = location.hash.slice(1).split('?')[0] || 'overview'; return TITLES[v] ? v : 'overview' }
@@ -161,7 +161,7 @@ async function flushRefresh() {
   refreshStatus()
   const view = currentView()
   if (view === 'platforms' && !ids.has('all')) return run(refreshRows)([...ids].filter(Number.isFinite))
-  if (['overview', 'platforms', 'queue', 'failed', 'credentials'].includes(view)) run(loaders[view])({ soft: true })
+  if (['overview', 'platforms', 'queue', 'added', 'failed', 'credentials'].includes(view)) run(loaders[view])({ soft: true })
   if (view === 'integrations') run(loaders.integrations)()
 }
 const editing = root => { const a = document.activeElement; return a && root?.contains(a) && /INPUT|TEXTAREA|SELECT/.test(a.tagName) ? a : null }
@@ -185,7 +185,7 @@ const KPIS = [
   ['discovered', 'Platforms discovered', '', '#platforms'], ['qualified', 'Qualified', '', '#platforms'], ['freeSelected', 'Free platforms selected'],
   ['paidSkipped', 'Paid, skipped', '', '#platforms?status=paid_skipped'], ['registered', 'Accounts registered', '', '#credentials'],
   ['inProgress', 'In progress', '', '#platforms?group=in_progress'], ['awaitingYou', 'Awaiting your approval', 'alert', '#queue'],
-  ['approvedWaiting', 'Approved, not yet submitted', '', '#platforms?group=pipeline'], ['successfullyAdded', 'Successfully added', 'accent', '#platforms?group=added'],
+  ['approvedWaiting', 'Approved, not yet submitted', '', '#platforms?group=pipeline'], ['successfullyAdded', 'Successfully added', 'accent', '#added'],
   ['pendingPlatformApproval', 'Awaiting platform review', '', '#platforms?status=pending_platform_review'], ['liveBacklinks', 'Live backlinks', 'accent', '#platforms?status=live_backlink'],
   ['dofollow', 'Dofollow', 'accent'], ['nofollow', 'Nofollow'], ['lost', 'Backlinks lost', 'alert', '#platforms?status=backlink_lost'],
   ['failed', 'Failed', 'alert', '#failed'], ['needsYou', 'Needs you', 'alert', '#queue']
@@ -439,6 +439,24 @@ $('#needs-you').addEventListener('click', run(async e => {
   if (a) await platformAction(item.dataset.platform, a, e.target, item.dataset.name)
 }))
 
+// ---------- successfully added ----------
+const timeline = t => `<div class="timeline">${t.map(m => `<span class="${m.at ? 'done' : 'todo'}" title="${esc(m.at ? fmtTime(m.at) : 'not yet')}">${m.at ? '✓' : '○'} ${esc(m.name)}${m.at ? ` ${fmtDate(m.at)}` : ''}</span>`).join('')}</div>`
+const who = r => `${r.account_email ? esc(r.account_email) : '—'}${r.login_method ? `<div class="sub">${esc(label(r.login_method))}</div>` : ''}${r.manual ? '<div class="sub">recorded by a person</div>' : ''}`
+loaders.added = async () => {
+  const a = await api('/api/added')
+  const name = r => `<strong>${esc(r.name)}</strong><div class="sub">${esc(r.domain)}</div>${timeline(r.timeline)}`
+  $('#added-live-n').textContent = a.live.length
+  $('#added-pub-n').textContent = a.published.length
+  $('#added-wait-n').textContent = a.awaiting.length
+  $('#added-live').innerHTML = a.live.map(r => `<tr><td>${name(r)}</td><td>${link(r.listing_url, 'listing')}</td><td>${link(r.backlink_page, 'page')}</td>
+    <td><span class="pill ${r.is_dofollow ? 'ok' : ''}">${esc(r.is_dofollow ? 'dofollow' : r.rel || 'nofollow')}</span>${r.link_count > 1 ? `<div class="sub">${r.link_count} links</div>` : ''}</td>
+    <td>${esc(r.anchor_text || '—')}</td><td>${fmtDate(r.first_seen_at)}</td><td>${fmtTime(r.last_checked_at)}</td><td>${who(r)}</td></tr>`).join('') || '<tr><td colspan="8" class="muted">No live backlinks yet.</td></tr>'
+  $('#added-pub').innerHTML = a.published.map(r => `<tr><td>${name(r)}</td><td>${link(r.listing_url, 'listing')}</td><td>${esc(r.found)}</td><td>${fmtTime(r.last_checked_at)}</td><td>${who(r)}</td></tr>`).join('')
+    || '<tr><td colspan="5" class="muted">None.</td></tr>'
+  $('#added-wait').innerHTML = a.awaiting.map(r => `<tr><td>${name(r)}</td><td>${fmtDate(r.submitted_at)}</td><td>${r.waitingDays == null ? '—' : `${r.waitingDays} day${r.waitingDays === 1 ? '' : 's'}`}</td><td>${who(r)}</td></tr>`).join('')
+    || '<tr><td colspan="4" class="muted">None.</td></tr>'
+}
+
 // ---------- failed ----------
 loaders.failed = async () => {
   const rows = await api('/api/failed')
@@ -669,6 +687,7 @@ async function refreshStatus() {
     const n = (ov.needsYou || 0) + (ov.awaitingYou || 0)
     $('#badge-queue').hidden = !n; $('#badge-queue').textContent = n
     $('#badge-failed').hidden = !ov.failed; $('#badge-failed').textContent = ov.failed
+    $('#badge-added').hidden = !ov.successfullyAdded; $('#badge-added').textContent = ov.successfullyAdded
     setDot('#dot-gmail', g.connected && !g.expired ? 'ok' : g.connected ? 'warn' : '')
     setDot('#dot-chrome', c.attached ? (c.googleSignedIn && c.health?.ok !== false ? 'ok' : 'warn') : '')
   } catch {}

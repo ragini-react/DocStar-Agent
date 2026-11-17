@@ -76,6 +76,30 @@ export function createViews({ db }) {
     return { live, published, awaiting, total: live.length + published.length + awaiting.length }
   }
 
+  /** Milestones of one platform's journey, each with the date it was first reached. */
+  function milestones(platformId) {
+    const first = to => db.prepare(`SELECT MIN(at) t FROM platform_transitions WHERE platform_id = ? AND to_status IN (${to.map(() => '?').join(',')})`).get(platformId, ...to).t
+    const p = db.prepare(`SELECT p.created_at, a.signup_completed_at, s.approved_at, s.submitted_at, s.published_at, b.first_seen_at, b.last_checked_at
+      FROM platforms p LEFT JOIN accounts a ON a.platform_id = p.id LEFT JOIN submissions s ON s.platform_id = p.id LEFT JOIN backlinks b ON b.submission_id = s.id WHERE p.id = ?`).get(platformId)
+    if (!p) return []
+    return [
+      ['discovered', 'Discovered', p.created_at],
+      ['qualified', 'Qualified', first(['qualified'])],
+      ['approved', 'Approved', p.approved_at || first(['approved'])],
+      ['registered', 'Account created', p.signup_completed_at || first(['registered'])],
+      ['submitted', 'Submitted', p.submitted_at || first(['submitted'])],
+      ['published', 'Published', p.published_at || first(['published', 'no_backlink'])],
+      ['live', 'Backlink live', p.first_seen_at || first(['live_backlink'])]
+    ].map(([key, name, at]) => ({ key, name, at: at || null }))
+  }
+
+  /** The Successfully added view, each item with its timeline. */
+  function added() {
+    const a = successfullyAdded()
+    const withTimeline = r => ({ ...r, timeline: milestones(r.platform_id) })
+    return { live: a.live.map(withTimeline), published: a.published.map(withTimeline), awaiting: a.awaiting.map(withTimeline), total: a.total }
+  }
+
   function overview() {
     const one = (sql, ...a) => db.prepare(sql).get(...a).n
     const byStatus = Object.fromEntries(db.prepare('SELECT status, COUNT(*) n FROM platforms GROUP BY status').all().map(r => [r.status, r.n]))
@@ -115,7 +139,7 @@ export function createViews({ db }) {
     }
   }
 
-  return { needsYou, failed, approvedPipeline, successfullyAdded, overview }
+  return { needsYou, failed, approvedPipeline, successfullyAdded, added, milestones, overview }
 }
 
 function safeJson(v, fallback) { try { return v ? JSON.parse(v) : fallback } catch { return fallback } }

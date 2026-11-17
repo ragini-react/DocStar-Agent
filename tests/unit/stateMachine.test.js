@@ -209,3 +209,18 @@ test('repair: the observed problems are resolved and every invariant holds after
   assert.match(r.report, /## Platforms: before → after/)
   t.orchestrator.shutdown()
 })
+
+test('successfully added: three groups, each item with its dated timeline', () => {
+  const t = setup()
+  const live = platformAt(t, 'discovered', { name: 'LiveOne' })
+  for (const s of ['qualifying', 'qualified', 'listing_drafted', 'approval_required', 'approved', 'submitting', 'submitted', 'live_backlink']) t.status.transition(live, s)
+  const sub = t.db.prepare(`INSERT INTO submissions (platform_id, status, listing_url, submitted_at) VALUES (?, 'published', 'https://x.io/docstar', '2026-11-10') RETURNING id`).get(live)
+  t.db.prepare(`INSERT INTO backlinks (submission_id, page_url, status, is_dofollow, first_seen_at) VALUES (?, 'https://x.io/docstar', 'live', 1, '2026-11-12')`).run(sub.id)
+  platformAt(t, 'pending_platform_review', { name: 'Waiting', submission: 'pending_approval' })
+  const a = t.views.added()
+  assert.deepEqual([a.live.length, a.published.length, a.awaiting.length, a.total], [1, 0, 1, 2])
+  const tl = Object.fromEntries(a.live[0].timeline.map(m => [m.key, m.at]))
+  for (const k of ['discovered', 'qualified', 'approved', 'submitted', 'live']) assert.ok(tl[k], k)
+  assert.equal(tl.live, '2026-11-12')
+  assert.equal(t.views.overview().successfullyAdded, a.total)
+})

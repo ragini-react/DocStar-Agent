@@ -26,6 +26,7 @@
         <a href="#overview" data-view="overview">Overview</a>
         <a href="#platforms" data-view="platforms">Platforms</a>
         <a href="#queue" data-view="queue">Needs you <span id="badge-queue" class="badge" hidden></span></a>
+        <a href="#added" data-view="added">Successfully added <span id="badge-added" class="badge ok" hidden></span></a>
         <a href="#failed" data-view="failed">Failed <span id="badge-failed" class="badge" hidden></span></a>
         <a href="#company" data-view="company">DocStar profile <span id="badge-company" class="badge" hidden>!</span></a>
         <a href="#activity" data-view="activity">Activity</a>
@@ -109,6 +110,13 @@
         <div class="card"><h2>Listings waiting for your approval</h2><p class="muted">Nothing is registered or published on a platform until you approve it here. You can edit the listing before approving.</p><div id="approvals"></div></div>
         <div class="card"><h2>Waiting for you</h2><p class="muted">CAPTCHAs, sign-ins, missing details and retries that ran out. Each says what happened, what to do and where; press Resume when done.</p><div id="needs-you"></div></div>
         <div class="card" id="browser-queue-card"><h2>Approved, not yet submitted</h2><p class="muted">Every approved listing whose sign-up or submission has not finished, with the step it is at.</p><div id="browser-queue"></div></div>
+      </section>
+
+      <section id="view-added" class="view" hidden>
+        <div class="toolbar"><p class="muted small" style="margin:0">Everything the agent (or a person) finished, verified independently. Live links are re-checked on a schedule.</p><span class="spacer"></span><a class="btn" href="/api/export/added.csv">Export CSV</a></div>
+        <div class="card"><h2>Live with backlink <span id="added-live-n" class="pill ok"></span></h2><div class="table-wrap"><table class="added"><thead><tr><th>Platform</th><th>Listing</th><th>Backlink</th><th>Link</th><th>Anchor text</th><th>First verified</th><th>Last re-verified</th><th>Account</th></tr></thead><tbody id="added-live"></tbody></table></div></div>
+        <div class="card"><h2>Published, backlink not found yet <span id="added-pub-n" class="pill warn"></span></h2><div class="table-wrap"><table class="added"><thead><tr><th>Platform</th><th>Listing</th><th>What was found</th><th>Last checked</th><th>Account</th></tr></thead><tbody id="added-pub"></tbody></table></div></div>
+        <div class="card"><h2>Submitted, awaiting platform review <span id="added-wait-n" class="pill info"></span></h2><div class="table-wrap"><table class="added"><thead><tr><th>Platform</th><th>Submitted</th><th>Waiting</th><th>Account</th></tr></thead><tbody id="added-wait"></tbody></table></div></div>
       </section>
 
       <section id="view-failed" class="view" hidden>
