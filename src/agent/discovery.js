@@ -143,11 +143,16 @@ ${exclude}`,
           activity.info('discovery_unreachable', `${c.name} (${norm.domain}) answered ${page.status}; not added`)
           continue
         }
-        const r = platforms.create({ name: c.name.slice(0, 80), url: norm.url, category: c.category, source: 'discovered', notes: c.why })
+        // The final URL after redirects is the one recorded; the source says which search found it.
+        const finalUrl = page.url || norm.url
+        let finalNorm
+        try { finalNorm = normalizeUrl(finalUrl) } catch { finalNorm = norm }
+        if (known.includes(finalNorm.domain)) continue
+        const r = platforms.create({ name: c.name, url: finalNorm.url, category: c.category, source: `discovery:${query}`.slice(0, 200), notes: c.why })
         if (r.created) {
           if (c.submit_url) platforms.update(r.platform.id, { submission_url: c.submit_url })
           added.push(r.platform.id)
-          known.push(norm.domain)
+          known.push(norm.domain, finalNorm.domain)
         }
       }
       return { query, source, candidates: answer.items.length, added }

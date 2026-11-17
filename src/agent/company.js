@@ -11,16 +11,31 @@ export const COMPANY_FIELDS = [
   ['website', 'Website URL'],
   ['tagline', 'Tagline (≤ 80 characters)'],
   ['short_description', 'Short description (≤ 160 characters)'],
+  ['medium_description', 'Medium description (≤ 500 characters)'],
   ['long_description', 'Detailed description (2–3 paragraphs)'],
   ['category', 'Product category'],
+  ['categories', 'Other categories (comma separated)'],
+  ['tags', 'Tags (comma separated)'],
   ['features', 'Key features (one per line)'],
   ['audience', 'Target audience'],
   ['keywords', 'Keywords (comma separated)'],
+  ['pricing_model', 'Pricing model (free, freemium, subscription, …)'],
   ['pricing_summary', 'Pricing summary'],
+  ['docs_url', 'Documentation URL'],
+  ['openapi_url', 'OpenAPI / spec URL (if any)'],
+  ['github_url', 'GitHub URL (if any)'],
   ['logo_url', 'Logo / social image URL'],
+  ['logo_square_url', 'Logo, square (e.g. 512×512) URL'],
+  ['logo_wide_url', 'Logo, wide URL'],
+  ['favicon_url', 'Favicon URL'],
+  ['screenshots', 'Screenshot URLs, with sizes (one per line, e.g. https://… 1280x800)'],
+  ['founder_name', 'Founder name'],
+  ['contact_name', 'Contact name'],
   ['contact_email', 'Contact email'],
-  ['social_links', 'Social links (one per line)']
+  ['social_links', 'Social links (one per line: X/Twitter, LinkedIn, GitHub, YouTube)']
 ]
+// Facts a listing form often needs but that must come from a person (never drafted or guessed).
+export const PERSON_ONLY = new Set(['founder_name', 'contact_name', 'openapi_url', 'screenshots', 'logo_square_url', 'logo_wide_url'])
 
 const schema = {
   name: 'docstar_profile',
@@ -90,6 +105,8 @@ export function createCompany({ db, ai, activity }) {
         keywords: draft.keywords.join(', '),
         pricing_summary: draft.pricing_summary,
         logo_url: home.ogImage || '',
+        favicon_url: (home.html.match(/<link[^>]+rel=["'][^"']*icon[^"']*["'][^>]*href=["']([^"']+)["']/i)?.[1] && new URL(home.html.match(/<link[^>]+rel=["'][^"']*icon[^"']*["'][^>]*href=["']([^"']+)["']/i)[1], 'https://docstar.io/').toString()) || '',
+        github_url: social.find(h => /github\.com/.test(h)) || '',
         contact_email: emails.find(e => e.endsWith('@docstar.io')) || 'support@docstar.io',
         social_links: social.join('\n')
       }

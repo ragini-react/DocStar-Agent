@@ -96,6 +96,31 @@ export function createGmail({ db, vault, activity, viasocket, config }) {
     },
 
     /**
+     * Emails from a platform's domain received after `since`, from the inbox and the spam folder (read-only: search and
+     * read only, the read/unread state is not changed). Bodies are returned to the caller in memory and never stored.
+     */
+    async searchPlatform({ domain, since, includeSpam = true, max = 10 }) {
+      const searches = [{ search_mode: 'manual', query: ['domain'], searchFields: { domain }, pagination: { maxResults: max } }]
+      if (includeSpam) searches.push({ search_mode: 'manual', query: ['domain', 'label'], searchFields: { domain, labelIds: ['SPAM'] }, pagination: { maxResults: max } })
+      const seen = new Map()
+      for (const input of searches) {
+        let res
+        try { res = await runAction(config.gmail.searchAction, input) } catch (e) { if (input === searches[0]) throw e; continue } // the spam search is best effort
+        for (const e of Array.isArray(res?.emails) ? res.emails : []) {
+          if (!senderDomain(e.from)?.endsWith(domain) || (since && e.originalSentDate < since)) continue
+          seen.set(e.id, { ...e, spam: (e.labelIds || []).includes('SPAM') })
+        }
+      }
+      const out = []
+      for (const e of [...seen.values()].sort((a, b) => String(b.originalSentDate).localeCompare(String(a.originalSentDate)))) {
+        let body = e.body
+        if (!body?.html && !body?.plain) body = (await runAction(config.gmail.getMessageAction, { message_id: e.id }).catch(() => null))?.body
+        out.push({ id: e.id, from: e.from, subject: e.subject || '', receivedAt: e.originalSentDate, spam: e.spam, body })
+      }
+      return out
+    },
+
+    /**
      * Find the verification link a platform sent after `since`. Only mail from that platform's domain is
      * looked at, and only https links whose host is that domain qualify. Returns { link, host } or null.
      */

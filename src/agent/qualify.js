@@ -3,6 +3,7 @@
 // or qualified (then waits for the operator's approval, or goes straight to the queue when approval is off).
 import { now, getSetting } from '../db/index.js'
 import { fetchPage } from './fetchPage.js'
+import { safeEvaluate, settle } from '../browser/pageGuard.js'
 import { arr, bool, int, obj, oneOf, str } from './schema.js'
 
 const score = d => int(`0–100: ${d}`)
@@ -39,7 +40,25 @@ const schema = {
 
 const QUALIFY_SLICE = 5000
 
-export function createQualifier({ db, ai, activity, chrome, listings, approvals, orchestrator }) {
+/** The one threshold rule: a score at or above the minimum qualifies. */
+export const qualifies = (score, min) => Number(score) >= Number(min)
+
+// A fixed rubric: the overall score is computed from the parts, never taken from the model's own guess, so the same
+// assessment always gives the same number.
+export const RUBRIC = { relevance: 0.30, domain_reputation: 0.15, audience_quality: 0.15, credibility: 0.10, indexability: 0.10, referral_potential: 0.10, backlink_quality: 0.10 }
+export const rubricScore = q => Math.round(Object.entries(RUBRIC).reduce((sum, [k, w]) => sum + w * Math.max(0, Math.min(100, Number(q[k]) || 0)), 0))
+const MIN_TEXT = 800 // less readable text than this is not enough to judge a site
+const CACHE_DAYS = 30
+
+/** Pure: an evaluation that is a failure to evaluate (too little to read, or the model saw nothing) rather than a low score. */
+export function evaluationFailed(q, textChars) {
+  if (textChars < MIN_TEXT) return `only ${textChars} characters of the site could be read`
+  const parts = Object.keys(RUBRIC).map(k => Number(q[k]) || 0)
+  if (parts.every(v => v <= 5)) return 'every score came back near zero: the pages gave the model nothing to judge'
+  return null
+}
+
+export function createQualifier({ db, ai, activity, chrome, listings, approvals, orchestrator, status, autoApproval = null }) {
   // Reading pages in Chrome is optional: without it, blocked sites are read over HTTP only.
   async function read(url) {
     try {
@@ -55,11 +74,11 @@ export function createQualifier({ db, ai, activity, chrome, listings, approvals,
     if (!chrome) return { url, status: httpStatus, text: '', links: [] } // hosted copy: plain fetches only
     let page
     try {
-      page = await (await chrome.context()).newPage()
+      page = await chrome.isolatedPage() // a read-only visit: never in the DocStar profile
       const res = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30_000 })
-      await page.waitForTimeout(2500)
-      const text = await page.evaluate(() => document.body?.innerText || '')
-      const links = await page.evaluate(() => [...document.querySelectorAll('a[href]')].map(a => ({ href: a.href, text: a.innerText.trim().slice(0, 80) })))
+      await settle(page)
+      const { text, links } = await safeEvaluate(page, () => ({ text: document.body?.innerText || '',
+        links: [...document.querySelectorAll('a[href]')].map(a => ({ href: a.href, text: a.innerText.trim().slice(0, 80) })) }))
       return { url: page.url(), status: res?.status() ?? httpStatus, text, links, viaChrome: true }
     } catch (e) {
       return { url, status: httpStatus, text: '', links: [], error: e.message }
@@ -69,17 +88,29 @@ export function createQualifier({ db, ai, activity, chrome, listings, approvals,
   }
 
   return {
-    async run(platformId) {
+    /** `force`: a person asked for a re-evaluation (otherwise a recent score for this domain is reused). */
+    async run(platformId, { force = false } = {}) {
       const p = db.prepare('SELECT * FROM platforms WHERE id = ?').get(platformId)
       if (!p) throw new Error('platform gone')
+      const minScore = Number(getSetting(db, 'min_quality_score', 55))
+      // Never re-scored without a reason: a score from the last 30 days is the score.
+      const cached = !force && db.prepare(`SELECT * FROM platform_scores WHERE platform_id = ? AND scored_at > ? AND method LIKE 'ai:%' ORDER BY scored_at DESC, id DESC LIMIT 1`)
+        .get(p.id, new Date(Date.now() - CACHE_DAYS * 86400_000).toISOString())
+      if (cached && cached.overall != null && p.pricing !== 'unknown') {
+        const ok = qualifies(cached.overall, minScore)
+        status.transition(p.id, ok ? 'qualified' : 'rejected', { statusReason: ok ? null : 'low_score', reason: `score ${cached.overall} (kept from ${cached.scored_at.slice(0, 10)})` })
+        if (ok) orchestrator.enqueue(p.id, 'prepare')
+        return { status: ok ? 'qualified' : 'rejected', reason: 'cached score', score: cached.overall }
+      }
       const home = await read(p.url)
       // The same site under a second name (g2crowd.com redirects to g2.com): one platform, worked on once.
       const landed = (() => { try { return new URL(home.url).hostname.toLowerCase().replace(/^www\./, '') } catch { return p.domain } })()
       if (landed !== p.domain && !landed.endsWith(`.${p.domain}`)) {
         const twin = db.prepare(`SELECT id, name FROM platforms WHERE id <> ? AND (domain = ? OR ? LIKE '%.' || domain)`).get(p.id, landed, landed)
         if (twin) {
-          db.prepare(`UPDATE platforms SET status = 'rejected', notes = ?, updated_at = ? WHERE id = ?`)
+          db.prepare(`UPDATE platforms SET notes = ?, updated_at = ? WHERE id = ?`)
             .run(`duplicate: ${p.domain} redirects to ${landed}, already listed as ${twin.name}`, now(), p.id)
+          status.transition(p.id, 'rejected', { statusReason: 'duplicate', reason: `${p.domain} redirects to ${landed}, already listed as ${twin.name}` })
           activity.info('platform_rejected', `${p.name}: duplicate of ${twin.name} (${p.domain} redirects to ${landed})`, { platformId: p.id })
           return { status: 'rejected', reason: 'duplicate', score: null }
         }
@@ -89,7 +120,12 @@ export function createQualifier({ db, ai, activity, chrome, listings, approvals,
       const extra = []
       for (const u of urls.slice(0, 2)) extra.push(await read(u))
       const pages = [home, ...extra].filter(x => x.text)
-      if (!pages.length) throw new Error(`could not read ${p.domain} (HTTP ${home.status})`)
+      const textChars = pages.reduce((n, x) => n + x.text.trim().length, 0)
+      if (!pages.length || textChars < MIN_TEXT) {
+        // Not a low score: nothing to judge. Recorded as such and tried again later (feedQueue: after a day).
+        status.transition(p.id, 'evaluation_failed', { statusReason: 'evaluation_failed', reason: `could not read enough of ${p.domain} (HTTP ${home.status}, ${textChars} characters)` })
+        return { status: 'evaluation_failed', reason: 'too little data', score: null }
+      }
 
       const q = await ai.json({
         threadId: `qualify-${p.domain}-${Date.now().toString(36)}`,
@@ -98,47 +134,62 @@ export function createQualifier({ db, ai, activity, chrome, listings, approvals,
         message: pages.map(x => `### ${x.url} (HTTP ${x.status}${x.viaChrome ? ', read in Chrome' : ''})\n${x.text.slice(0, QUALIFY_SLICE)}`).join('\n\n')
       })
 
-      const minScore = Number(getSetting(db, 'min_quality_score', 55))
-      let status, reason
-      if (!q.legitimate) [status, reason] = ['rejected', 'not a legitimate platform']
-      else if (q.listing_requires_payment || (q.pricing === 'paid' && !q.free_listing_available)) [status, reason] = ['paid_skipped', q.pricing_notes || 'listing requires payment']
-      else if (!q.accepts_submissions) [status, reason] = ['rejected', 'does not accept submissions']
-      else if (q.automation_prohibited) [status, reason] = ['rejected', `terms prohibit automated submission: ${q.automation_note}`]
-      else if (q.overall < minScore) [status, reason] = ['rejected', `quality ${q.overall} below ${minScore}`]
-      else [status, reason] = ['qualified', q.summary]
+      const modelOverall = q.overall
+      q.overall = rubricScore(q)
+      const failed = evaluationFailed(q, textChars)
+      if (failed) {
+        db.prepare(`INSERT INTO platform_scores (platform_id, overall, model_overall, method, evidence, reason) VALUES (?, NULL, ?, 'ai:claude-sonnet-5-5', ?, ?)`)
+          .run(p.id, modelOverall, JSON.stringify(pages.map(x => x.url)), `evaluation failed: ${failed}`)
+        status.transition(p.id, 'evaluation_failed', { statusReason: 'evaluation_failed', reason: failed })
+        return { status: 'evaluation_failed', reason: failed, score: null }
+      }
+      let result, reason, code = null
+      if (!q.legitimate) [result, reason, code] = ['rejected', 'not a legitimate platform', 'not_legitimate']
+      else if (q.listing_requires_payment || (q.pricing === 'paid' && !q.free_listing_available)) [result, reason, code] = ['paid_skipped', q.pricing_notes || 'listing requires payment', 'paid_only']
+      else if (!q.accepts_submissions) [result, reason, code] = ['rejected', 'does not accept submissions', 'not_accepting']
+      else if (q.automation_prohibited) [result, reason, code] = ['rejected', `terms prohibit automated submission: ${q.automation_note}`, 'policy']
+      else if (!qualifies(q.overall, minScore)) [result, reason, code] = ['rejected', `quality ${q.overall} below ${minScore}`, 'low_score']
+      else [result, reason] = ['qualified', q.summary]
 
       const catId = db.prepare('SELECT id FROM platform_categories WHERE slug = ?').get(q.category)?.id ?? null
       db.transaction(() => {
         db.prepare(`INSERT INTO platform_scores (platform_id, relevance, domain_reputation, audience_quality, credibility, indexability,
-            referral_potential, backlink_quality, overall, seo_value, method, evidence)
-          VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`).run(p.id, q.relevance, q.domain_reputation, q.audience_quality, q.credibility, q.indexability,
-          q.referral_potential, q.backlink_quality, q.overall, q.seo_value, 'ai:claude-sonnet-5-5', JSON.stringify(pages.map(x => x.url)))
+            referral_potential, backlink_quality, overall, model_overall, seo_value, method, evidence, reason)
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(p.id, q.relevance, q.domain_reputation, q.audience_quality, q.credibility, q.indexability,
+          q.referral_potential, q.backlink_quality, q.overall, modelOverall, q.seo_value, 'ai:claude-sonnet-5-5', JSON.stringify(pages.map(x => x.url)),
+          force ? 're-evaluation requested' : 'first evaluation')
         db.prepare(`UPDATE platforms SET category_id = COALESCE(?, category_id), submission_url = COALESCE(NULLIF(?, ''), submission_url),
             pricing = ?, pricing_notes = ?, registration_requirements = ?, submission_requirements = ?, backlink_availability = ?,
-            automation_policy = ?, domain_reputation = ?, reputation_source = 'ai estimate from site content', status = ?,
+            automation_policy = ?, domain_reputation = ?, reputation_source = 'ai estimate from site content',
             notes = ?, updated_at = ? WHERE id = ?`)
           .run(catId, q.submission_url, q.pricing, q.pricing_notes || null,
             `${q.requires_account ? 'account required' : 'no account needed'}; sign-in: ${q.login_methods.join(', ') || 'unknown'}`,
             q.submission_requirements || null, q.backlink, q.automation_prohibited ? 'prohibited' : 'unclear',
-            q.domain_reputation, status, reason, now(), p.id)
+            q.domain_reputation, reason, now(), p.id)
+        status.transition(p.id, result, { statusReason: code, reason: `score ${q.overall}: ${reason}` })
       })()
-      const level = status === 'qualified' ? 'success' : 'info'
-      activity[level](`platform_${status}`, `${p.name}: ${status.replace('_', ' ')} (score ${q.overall}) — ${reason}`, { platformId: p.id })
 
       // The listing is written from the approved DocStar profile; until it is approved, qualified platforms wait.
-      if (status === 'qualified') orchestrator.enqueue(p.id, 'prepare')
-      return { status, reason, score: q.overall }
+      if (result === 'qualified') orchestrator.enqueue(p.id, 'prepare')
+      return { status: result, reason, score: q.overall }
     },
 
     /** Task 'prepare': write the listing, then ask the operator (or queue the submission when approval is off). */
     async prepare(platformId, ctx) {
-      if (!listings.ready()) return ctx.defer(30 * 60_000, 'waiting for the DocStar profile to be approved')
+      // The profile is approved by a person: wait for that event instead of retrying on a timer.
+      if (!listings.ready()) return ctx.waitFor('company_approved', 'waiting for the DocStar profile to be approved')
       const p = db.prepare('SELECT status FROM platforms WHERE id = ?').get(platformId)
-      if (p?.status !== 'qualified') return
-      const listing = await listings.draft(platformId)
-      const q = db.prepare('SELECT * FROM platform_scores WHERE platform_id = ? ORDER BY scored_at DESC LIMIT 1').get(platformId)
-      if (getSetting(db, 'require_approval', '1') === '1') approvals.request(platformId, 'platform', { score: q, listing })
-      else orchestrator.enqueue(platformId, 'submit')
+      if (p?.status !== 'qualified' && p?.status !== 'listing_drafted') return
+      const listing = p.status === 'listing_drafted' ? listings.get(platformId) : await listings.draft(platformId)
+      if (p.status === 'qualified') status.transition(platformId, 'listing_drafted', { taskId: ctx.task?.id, reason: 'listing written from the approved profile' })
+      const q = db.prepare('SELECT * FROM platform_scores WHERE platform_id = ? ORDER BY scored_at DESC, id DESC LIMIT 1').get(platformId)
+      const auto = autoApproval ? autoApproval(platformId, listing) : { ok: false }
+      if (getSetting(db, 'require_approval', '1') !== '1') approvals.approvePlatform(platformId, { auto: true, why: 'approval is switched off in Settings' })
+      else if (auto.ok) {
+        approvals.request(platformId, 'platform', { score: q, listing })
+        const pending = db.prepare(`SELECT id FROM human_approvals WHERE platform_id = ? AND status = 'pending'`).get(platformId)
+        approvals.approve(pending.id, null, { auto: true, why: auto.why })
+      } else approvals.request(platformId, 'platform', { score: q, listing, autoApprovalSkipped: auto.why || null })
     }
   }
 }

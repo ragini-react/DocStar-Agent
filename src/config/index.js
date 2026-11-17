@@ -61,7 +61,8 @@ export function loadConfig() {
     chrome: {
       executable: process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
       profileDir: process.env.CHROME_PROFILE_DIR || path.join(dataDir, 'chrome-profile'),
-      debugPort: Number(process.env.CHROME_DEBUG_PORT || 9333)
+      debugPort: Number(process.env.CHROME_DEBUG_PORT || 9333),
+      headless: process.env.CHROME_HEADLESS === '1'
     },
     masterKey,
     adminPassword: process.env.DOCSTAR_ADMIN_PASSWORD || null, // hosted without it: sign-in stays closed

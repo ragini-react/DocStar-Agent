@@ -2,13 +2,13 @@
 // before Playwright runs it. The AI sees elements by ref (e1, e2, …) from our own page snapshot,
 // never raw selectors, and fills secrets and company facts through {{placeholders}} we resolve.
 
-export const ACTIONS = ['click', 'type', 'select', 'upload', 'scroll', 'wait', 'navigate', 'submit', 'verify_email', 'request_human', 'skip', 'complete']
+export const ACTIONS = ['click', 'type', 'select', 'upload', 'scroll', 'wait', 'navigate', 'submit', 'verify_email', 'request_human', 'missing_field', 'skip', 'complete']
 export const SKIP_REASONS = ['paid', 'already_listed', 'not_possible', 'policy', 'not_relevant']
 
 const ELEMENT_ACTIONS = new Set(['click', 'type', 'select', 'upload', 'submit'])
 // May point at an element (the CAPTCHA to show the operator) but need not.
-const OPTIONAL_TARGET_ACTIONS = new Set(['request_human', 'skip', 'verify_email'])
-const VALUE_ACTIONS = new Set(['type', 'select', 'upload', 'navigate', 'scroll', 'wait'])
+const OPTIONAL_TARGET_ACTIONS = new Set(['request_human', 'skip', 'verify_email', 'missing_field'])
+const VALUE_ACTIONS = new Set(['type', 'select', 'upload', 'navigate', 'scroll', 'wait', 'missing_field'])
 // May carry a value: complete → the listing URL if one is visible; skip → one of SKIP_REASONS.
 const OPTIONAL_VALUE_ACTIONS = new Set(['complete', 'skip'])
 // Actions that send company information or publish it: allowed only once the listing is approved.
@@ -24,7 +24,7 @@ export const browserActionSchema = {
     properties: {
       action: { type: 'string', enum: ACTIONS },
       target: { type: ['string', 'null'], description: 'Element ref from the snapshot, e.g. "e12"; null when the action has no element' },
-      value: { type: ['string', 'null'], description: 'Text to type, option to select, URL to open, "up"/"down" to scroll, seconds to wait, {{company.logo}} to upload, the listing URL on complete, a skip reason (paid, already_listed, not_possible, policy, not_relevant); null otherwise' },
+      value: { type: ['string', 'null'], description: 'Text to type, option to select, URL to open, "up"/"down" to scroll, seconds to wait, {{company.logo}} to upload, the listing URL on complete, a skip reason (paid, already_listed, not_possible, policy, not_relevant), the form field\'s name on missing_field; null otherwise' },
       reason: { type: 'string', description: 'One sentence: why this step' },
       confidence: { type: 'number', description: '0 to 1' },
       requiresHumanApproval: { type: 'boolean', description: 'true for a CAPTCHA, payment, unclear terms, or anything you are unsure is allowed' }
@@ -33,6 +33,15 @@ export const browserActionSchema = {
 }
 
 const PLACEHOLDER = /\{\{([A-Za-z0-9_.]+)\}\}/g
+
+// Field label → the profile fact it needs, and values that must not be typed there instead.
+const SITE = /\{\{(company\.website|listing\.url)\}\}|https?:\/\/(www\.)?docstar\.io\/?$/
+const FIELD_FACTS = [
+  [/"[^"]*(documentation|docs url|docs link|api docs|api reference|developer docs)[^"]*"/i, 'docs_url', SITE],
+  [/"[^"]*(openapi|swagger|api spec|spec url)[^"]*"/i, 'openapi_url', SITE],
+  [/"[^"]*(github|repository|repo url)[^"]*"/i, 'github_url', SITE],
+  [/"[^"]*(founder|your name|full name|first name|last name)[^"]*"/i, 'founder_name', /\{\{(company\.name|listing\.title)\}\}/]
+]
 
 /**
  * @param {unknown} proposal  the AI's answer
@@ -94,6 +103,16 @@ export function validateBrowserAction(proposal, ctx) {
     // Free text must be something the operator approved; anything else must be only placeholders.
     const bare = p.value.replace(PLACEHOLDER, '').trim()
     if (bare && !ctx.approvedTexts.has(p.value)) errors.push('typed text is neither a placeholder nor approved listing text')
+  }
+
+  // Each fact goes only where it belongs: the homepage is not a documentation URL, an OpenAPI spec or a logo.
+  if (p.action === 'type' && typeof p.value === 'string' && ctx.fieldLabels?.[p.target]) {
+    const field = ctx.fieldLabels[p.target]
+    for (const [re, need, wrong] of FIELD_FACTS) {
+      if (re.test(field) && wrong.test(p.value) && !p.value.includes(`{{company.${need}}}`)) {
+        errors.push(ctx.profileFields?.has(need) ? `that field asks for ${need.replace(/_/g, ' ')}: type {{company.${need}}}` : `that field asks for ${need.replace(/_/g, ' ')}, which the approved profile does not have: use missing_field`)
+      }
+    }
   }
 
   if (PUBLISHING_ACTIONS.has(p.action) && !ctx.listingApproved && !p.requiresHumanApproval) {

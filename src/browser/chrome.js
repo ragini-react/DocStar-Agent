@@ -9,7 +9,7 @@ import { maskError } from '../security/mask.js'
 const sleep = ms => new Promise(r => setTimeout(r, ms))
 
 export function createChrome({ config, activity }) {
-  const { executable, profileDir, debugPort } = config.chrome
+  const { executable, profileDir, debugPort, headless = false } = config.chrome
   const endpoint = `http://127.0.0.1:${debugPort}`
   let browser = null
   let connecting = null
@@ -50,6 +50,8 @@ export function createChrome({ config, activity }) {
       `--user-data-dir=${profileDir}`,
       '--no-first-run',
       '--no-default-browser-check',
+      // Cloud worker: no screen. The profile (and its Google session) is the same persistent folder.
+      ...(headless ? ['--headless=new', '--window-size=1366,900'] : []),
       'about:blank'
     ], { detached: true, stdio: 'ignore' })
     child.unref() // Chrome outlives a server restart; we re-attach to it
@@ -86,6 +88,7 @@ export function createChrome({ config, activity }) {
   }
 
   const context = async () => (await connect()).contexts()[0]
+  let lastHealth = null
 
   return {
     connect,
@@ -112,9 +115,13 @@ export function createChrome({ config, activity }) {
       // Signed in to Google = Google's session cookie is in this profile. Read locally, nothing is visited.
       try {
         const cookies = await browser.contexts()[0].cookies('https://accounts.google.com')
-        return { ...base, googleSignedIn: cookies.some(c => c.name === 'SID' || c.name === '__Secure-1PSID') }
+        const googleSignedIn = cookies.some(c => c.name === 'SID' || c.name === '__Secure-1PSID')
+        const health = googleSignedIn ? { ok: true } : { ok: false, reason: 'The agent\'s Chrome is not signed in to Google: Google sign-ups will stop for you. Press "Sign in to Google" once.' }
+        if (lastHealth?.ok !== health.ok) activity[health.ok ? 'success' : 'warn']('chrome_health', health.ok ? 'Chrome is signed in to Google' : health.reason)
+        lastHealth = health
+        return { ...base, googleSignedIn, health }
       } catch (error) {
-        return { ...base, googleSignedIn: null, note: `Google session could not be read: ${maskError(error)}` }
+        return { ...base, googleSignedIn: null, health: { ok: false, reason: `Google session could not be read: ${maskError(error)}` }, note: `Google session could not be read: ${maskError(error)}` }
       }
     },
 
@@ -124,6 +131,27 @@ export function createChrome({ config, activity }) {
       await page.goto('https://accounts.google.com/', { waitUntil: 'domcontentloaded' })
       await page.bringToFront()
       activity.info('google_signin_opened', 'Google sign-in opened in Chrome for the operator')
+    },
+
+    /**
+     * A page in a separate, cookie-less context: for read-only visits (qualification, backlink checks), kept apart
+     * from the DocStar profile and its sessions. The caller closes it (closing the page closes its context).
+     */
+    async isolatedPage() {
+      const b = await connect()
+      const ctx = await b.newContext()
+      const page = await ctx.newPage()
+      page.on('close', () => ctx.close().catch(() => {}))
+      return page
+    },
+
+    /** Open a URL in the agent's own profile for a person (the Needs-you "where" link). */
+    async open(url) {
+      const u = new URL(url)
+      if (!/^https?:$/.test(u.protocol)) throw new Error('Only http(s) URLs')
+      const page = await (await context()).newPage()
+      await page.goto(u.toString(), { waitUntil: 'domcontentloaded', timeout: 30_000 })
+      await page.bringToFront()
     },
 
     async bringToFront() {

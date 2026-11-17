@@ -26,8 +26,11 @@
         <a href="#overview" data-view="overview">Overview</a>
         <a href="#platforms" data-view="platforms">Platforms</a>
         <a href="#queue" data-view="queue">Needs you <span id="badge-queue" class="badge" hidden></span></a>
+        <a href="#added" data-view="added">Successfully added <span id="badge-added" class="badge ok" hidden></span></a>
+        <a href="#failed" data-view="failed">Failed <span id="badge-failed" class="badge" hidden></span></a>
         <a href="#company" data-view="company">DocStar profile <span id="badge-company" class="badge" hidden>!</span></a>
         <a href="#activity" data-view="activity">Activity</a>
+        <a href="#health" data-view="health">Health</a>
         <a href="#integrations" data-view="integrations">Integrations</a>
         <a href="#credentials" data-view="credentials">Credentials</a>
         <a href="#settings" data-view="settings">Settings</a>
@@ -42,6 +45,10 @@
     <main>
       <header class="topbar">
         <h1 id="view-title">Overview</h1>
+        <div class="sync" id="sync-state" title="Whether the agent is online, and when this dashboard last received its data">
+          <span id="sync-dot" class="dot"></span><span id="sync-text">Checking…</span>
+          <button id="pending-btn" class="btn small" hidden>Pending changes <span id="pending-count" class="badge"></span></button>
+        </div>
         <div class="controls">
           <span id="automation-state" class="pill">—</span>
           <button class="btn primary" data-automation="start">Start</button>
@@ -52,6 +59,11 @@
       </header>
       <div id="hosted-banner" class="banner" hidden>Hosted copy. Sign-ups and submissions run in the agent's Chrome on the Mac; here you can review data, approve listings and edit the profile.</div>
       <div id="toast" class="toast" role="status" hidden></div>
+      <div id="pending-panel" class="card pending-panel" hidden>
+        <div class="row" style="justify-content:space-between"><h2 style="margin:0">Changes made here</h2><button class="btn ghost small" id="pending-close">Close</button></div>
+        <p class="muted small">Each change is applied by the agent. "Pending" changes wait for it to come online; you see "Applied" only once it really ran.</p>
+        <ol id="pending-list" class="pending-list"></ol>
+      </div>
 
       <section id="view-overview" class="view">
         <div id="kpis" class="kpis"></div>
@@ -65,6 +77,7 @@
       <section id="view-platforms" class="view" hidden>
         <div class="toolbar">
           <input id="f-q" type="search" placeholder="Search name or domain">
+          <select id="f-group"><option value="">All platforms</option><option value="needs_you">Needs you</option><option value="failed">Failed</option><option value="added">Successfully added</option><option value="in_progress">In progress</option><option value="pipeline">Approved, not yet submitted</option></select>
           <select id="f-status"><option value="">All statuses</option></select>
           <select id="f-category"><option value="">All categories</option></select>
           <select id="f-pricing"><option value="">Any pricing</option><option>free</option><option>freemium</option><option>paid</option><option>unknown</option></select>
@@ -89,14 +102,35 @@
             </tr></thead>
             <tbody></tbody>
           </table>
-          <p id="platforms-empty" class="empty" hidden>No platforms yet. Import the seed list or add one; discovery comes in Phase 3.</p>
+          <div class="row pager"><span id="platforms-count" class="muted small"></span><span class="spacer"></span><button class="btn small" id="pg-prev">Previous</button><button class="btn small" id="pg-next">Next</button></div>
+          <p id="platforms-empty" class="empty" hidden>No platforms match these filters.</p>
         </div>
       </section>
 
       <section id="view-queue" class="view" hidden>
         <div class="card"><h2>Listings waiting for your approval</h2><p class="muted">Nothing is registered or published on a platform until you approve it here. You can edit the listing before approving.</p><div id="approvals"></div></div>
-        <div class="card" id="browser-queue-card" hidden><h2>Approved, waiting for the browser step</h2><p class="muted">These listings are approved. Registration and submission run in a browser outside this hosted copy.</p><div id="browser-queue"></div></div>
-        <div class="card"><h2>Tasks that need you</h2><p class="muted">CAPTCHAs, sign-ins and anything unclear. Do the step in Chrome, then press Resume.</p><div id="needs-you"></div></div>
+        <div class="card"><h2>Waiting for you</h2><p class="muted">CAPTCHAs, sign-ins, missing details and retries that ran out. Each says what happened, what to do and where; press Resume when done.</p><div id="needs-you"></div></div>
+        <div class="card" id="browser-queue-card"><h2>Approved, not yet submitted</h2><p class="muted">Every approved listing whose sign-up or submission has not finished, with the step it is at.</p><div id="browser-queue"></div></div>
+      </section>
+
+      <section id="view-added" class="view" hidden>
+        <div class="toolbar"><p class="muted small" style="margin:0">Everything the agent (or a person) finished, verified independently. Live links are re-checked on a schedule.</p><span class="spacer"></span><a class="btn" href="/api/export/added.csv">Export CSV</a></div>
+        <div class="card"><h2>Live with backlink <span id="added-live-n" class="pill ok"></span></h2><div class="table-wrap"><table class="added"><thead><tr><th>Platform</th><th>Listing</th><th>Backlink</th><th>Link</th><th>Anchor text</th><th>First verified</th><th>Last re-verified</th><th>Account</th></tr></thead><tbody id="added-live"></tbody></table></div></div>
+        <div class="card"><h2>Published, backlink not found yet <span id="added-pub-n" class="pill warn"></span></h2><div class="table-wrap"><table class="added"><thead><tr><th>Platform</th><th>Listing</th><th>What was found</th><th>Last checked</th><th>Account</th></tr></thead><tbody id="added-pub"></tbody></table></div></div>
+        <div class="card"><h2>Submitted, awaiting platform review <span id="added-wait-n" class="pill info"></span></h2><div class="table-wrap"><table class="added"><thead><tr><th>Platform</th><th>Submitted</th><th>Waiting</th><th>Account</th></tr></thead><tbody id="added-wait"></tbody></table></div></div>
+      </section>
+
+      <section id="view-failed" class="view" hidden>
+        <div class="card"><h2>Failures</h2><p class="muted">Every platform or run in a failed state, with the error, the step, when, and how many attempts were used. Retry runs it again from the right step.</p><div id="failed-list"></div></div>
+      </section>
+
+      <section id="view-health" class="view" hidden>
+        <div class="toolbar"><select id="f-days"><option value="7">Last 7 days</option><option value="30" selected>Last 30 days</option><option value="90">Last 90 days</option></select><span id="tph" class="muted small"></span></div>
+        <div class="card table-wrap"><h2>Each stage</h2><table><thead><tr><th>Stage</th><th>Started</th><th>Succeeded</th><th>Failed</th><th>In progress</th><th>Success rate</th><th>Average time</th></tr></thead><tbody id="stages"></tbody></table></div>
+        <div class="grid-2">
+          <div class="card"><h2>Failure reasons</h2><ol id="reasons" class="history"></ol></div>
+          <div class="card"><h2>Summary <span id="summary-freq" class="pill"></span></h2><p id="alerts-config" class="muted small"></p><pre id="summary" class="summary"></pre></div>
+        </div>
       </section>
 
       <section id="view-company" class="view" hidden>
@@ -116,10 +150,13 @@
 
       <section id="view-activity" class="view" hidden>
         <div class="toolbar">
-          <select id="f-level"><option value="">All levels</option><option>info</option><option>success</option><option>warn</option><option>error</option></select>
+          <input id="f-aq" type="search" placeholder="Search messages">
+          <select id="f-aplatform"><option value="">All platforms</option></select>
+          <select id="f-level"><option value="">All levels</option><option value="info">Info</option><option value="success">Success</option><option value="warn">Warnings</option><option value="error">Errors</option></select>
+          <label class="check small"><input type="checkbox" id="f-group-runs" checked> Group by run</label>
           <span class="muted small" id="stream-state">connecting…</span>
         </div>
-        <div class="card"><ol id="activity" class="feed"></ol></div>
+        <div class="card"><ol id="activity" class="feed"></ol><div class="row"><button class="btn small" id="activity-more">Load older</button></div></div>
       </section>
 
       <section id="view-integrations" class="view" hidden>
@@ -161,14 +198,43 @@
         <form id="settings-form" class="card settings">
           <h2>Guardrails</h2>
           <label>Maximum sign-ups per hour <input name="max_signups_per_hour" type="number" min="1" max="10" required></label>
-          <label>Check backlinks every (hours) <input name="backlink_check_hours" type="number" min="6" max="72" required></label>
+          <label>Maximum sign-ups per day <input name="max_signups_per_day" type="number" min="1" max="50" required></label>
+          <label>Evaluations / checks run in parallel <input name="parallel_tasks" type="number" min="1" max="8" required></label>
+          <label>Attempts per task before it needs you <input name="max_attempts" type="number" min="1" max="10" required></label>
+          <label>A step counts as stuck after (minutes) <input name="stale_minutes" type="number" min="10" max="240" required></label>
+          <label>Re-check live backlinks every (hours) <input name="backlink_recheck_live_hours" type="number" min="6" max="168" required></label>
+          <label>Check pending listings every (hours) <input name="backlink_recheck_pending_hours" type="number" min="1" max="72" required></label>
+          <label class="check"><input name="nofollow_counts_as_live" type="checkbox"> Count a nofollow link as a live backlink</label>
           <label>Minimum quality score to qualify <input name="min_quality_score" type="number" min="30" max="90" required></label>
           <label>Platforms per discovery run <input name="discovery_batch" type="number" min="3" max="20" required></label>
-          <label class="check"><input name="require_approval" type="checkbox"> Ask for my approval before registering and submitting on each platform</label>
+          <label>Alert when the agent is offline for (minutes) <input name="offline_alert_minutes" type="number" min="5" max="120" required></label>
+          <label>Send a summary <select name="summary_frequency"><option value="weekly">Weekly (Mondays)</option><option value="daily">Daily</option><option value="off">Never</option></select></label>
+          <h2>Approvals</h2>
+          <label class="check"><input name="require_approval" type="checkbox"> Approvals on (master switch): nothing is registered or submitted without an approval</label>
+          <label class="check"><input name="auto_approve" type="checkbox"> Approve automatically when safe: only approved profile facts, free platform, no unusual requirements, and a score of at least</label>
+          <label>Auto-approve minimum score <input name="auto_approve_min_score" type="number" min="30" max="100" required></label>
           <button class="btn primary" type="submit">Save</button>
         </form>
       </section>
     </main>
   </div>
+
+  <aside id="drawer" class="drawer" hidden aria-label="Platform details">
+    <div class="drawer-head"><h2 id="drawer-title">Platform</h2><button class="btn ghost small" id="drawer-close">Close</button></div>
+    <div id="drawer-body" class="drawer-body"></div>
+  </aside>
+
+  <dialog id="manual-dialog" class="dialog">
+    <form method="dialog" id="manual-form" class="dialog-form">
+      <h2 id="manual-title">Mark as done manually</h2>
+      <p class="muted small">Record work done outside the agent. The platform moves to the right status and the backlink is checked at once.</p>
+      <label>Listing URL <input name="listingUrl" type="url" placeholder="https://platform.com/product/docstar"></label>
+      <label>Backlink page (if different from the listing) <input name="backlinkUrl" type="url" placeholder="optional"></label>
+      <label>Account email <input name="accountEmail" type="email" placeholder="support@docstar.io"></label>
+      <label>Signed up with <select name="loginMethod"><option value="email">Email</option><option value="google">Google</option><option value="github">GitHub</option></select></label>
+      <label>Notes <textarea name="notes" rows="3"></textarea></label>
+      <div class="row"><button class="btn primary" value="save">Save</button><button class="btn ghost" value="cancel" formnovalidate>Cancel</button></div>
+    </form>
+  </dialog>
 </body>
 </html>
