@@ -1,0 +1,29 @@
+# Every push to main (including merged pull requests) is tested and then deployed to
+# https://docstar-agent.embarko.app, so the hosted copy always runs what is on main.
+name: Deploy to Embarko
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+concurrency:
+  group: embarko-deploy
+  cancel-in-progress: false # let a running deploy finish; the next one follows with the newer commit
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - name: Deploy
+        run: bash scripts/deploy.sh
+        env:
+          DEPLOY_TOKEN: ${{ secrets.EMBARKO_DEPLOY_TOKEN }}

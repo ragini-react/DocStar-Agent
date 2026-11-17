@@ -144,6 +144,10 @@ export function createApp({ config, db, vault, activity, gmail, chrome, orchestr
     res.send(`ran ${rounds} queue round(s), checked ${checked} backlink(s); tasks ${JSON.stringify(orchestrator.counts())}`)
   }))
 
+  // Which build is running: the git commit scripts/deploy.sh sent as X-App-Version (Embarko exposes it as
+  // APP_VERSION). Public, so the deploy script and anyone checking can confirm the live copy matches main.
+  app.get('/api/version', (req, res) => res.set('Cache-Control', 'no-store').json({ version: process.env.APP_VERSION || 'local', hosted: config.hosted }))
+
   app.get('/api/session', (req, res) => res.json({
     authenticated: authed(req),
     hosted: config.hosted,
