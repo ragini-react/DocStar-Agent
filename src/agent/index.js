@@ -14,6 +14,7 @@ import { createBacklinkChecker } from './backlinks.js'
 import { createListingFinder } from './listingFinder.js'
 import { createPlaybooks } from './playbooks.js'
 import { createEmailVerifier } from '../integrations/emailVerifier.js'
+import { createFollowUp } from './followUp.js'
 
 const DISCOVERY_EVERY_MS = 6 * 3600_000
 const BACKLINK_EVERY_MS = 10 * 60_000
@@ -29,7 +30,7 @@ export function submitStart(p, db) {
   return null
 }
 
-export function createAgent({ db, vault, activity, chrome, gmail, orchestrator, platforms, status, config, autoApproval = null }) {
+export function createAgent({ db, vault, activity, chrome, gmail, orchestrator, platforms, status, config, autoApproval = null, alerts = null }) {
   const ai = createAi({ config })
   const company = createCompany({ db, ai, activity })
   const listings = createListings({ db, ai, company })
@@ -37,7 +38,7 @@ export function createAgent({ db, vault, activity, chrome, gmail, orchestrator, 
   const discovery = createDiscovery({ db, ai, platforms, activity })
   const browser = config.hosted ? null : chrome // a hosted copy has no Chrome: browser steps run elsewhere
   const qualifier = createQualifier({ db, ai, activity, chrome: browser, listings, approvals, orchestrator, status, autoApproval: (...a) => autoApproval?.(...a) ?? { ok: false } })
-  const backlinks = createBacklinkChecker({ db, chrome: browser, activity, status })
+  const backlinks = createBacklinkChecker({ db, chrome: browser, activity, status, alerts })
   const finder = createListingFinder({ ai })
   const playbooks = createPlaybooks({ db })
   const verifier = createEmailVerifier({ db, gmail, activity, vault, status, playbooks })
@@ -111,14 +112,28 @@ export function createAgent({ db, vault, activity, chrome, gmail, orchestrator, 
   orchestrator.hooks.onIdle = () => feedQueue() > 0 || queueDiscovery()
   orchestrator.hooks.onStart = () => { if (!db.prepare('SELECT 1 FROM platforms LIMIT 1').get()) queueDiscovery(true) }
 
-  // Backlink checks are read-only: they run whether or not the automation is started.
-  const timer = setInterval(async () => {
-    try { await backlinks.runDue() } catch {}
-  }, BACKLINK_EVERY_MS)
-  timer.unref?.()
+  const followUp = createFollowUp({ db, activity, status, orchestrator, finder, backlinks, gmail, alerts })
+  // Backlink checks, listing searches and reading the platforms' emails are read-only: they run whether or not the
+  // automation is started (a hosted mirror leaves them to the agent).
+  const timers = []
+  const every = (ms, fn, name) => {
+    let busy = false
+    const t = setInterval(async () => {
+      if (busy) return
+      busy = true
+      try { await fn() } catch (e) { activity.warn(`${name}_failed`, `${name.replace(/_/g, ' ')} failed: ${e.message}`) } finally { busy = false }
+    }, ms)
+    t.unref?.()
+    timers.push(t)
+  }
+  if (!config.hosted) {
+    every(BACKLINK_EVERY_MS, () => backlinks.runDue(), 'backlink_checks')
+    every(15 * 60_000, () => followUp.searchListings(), 'listing_search')
+    every(60 * 60_000, () => followUp.readEmails(), 'email_follow_up')
+  }
 
   return {
-    ai, company, listings, approvals, discovery, qualifier, backlinks, finder, playbooks,
+    ai, company, listings, approvals, discovery, qualifier, backlinks, finder, playbooks, followUp,
     queueDiscovery,
     feedQueue,
     approveCompany() {
@@ -127,6 +142,6 @@ export function createAgent({ db, vault, activity, chrome, gmail, orchestrator, 
       feedQueue()
       return n
     },
-    shutdown() { clearInterval(timer) }
+    shutdown() { for (const t of timers) clearInterval(t) }
   }
 }

@@ -36,7 +36,7 @@ const chrome = createChrome({ config, activity })
 const orchestrator = createOrchestrator({ db, activity, chrome, status, browser: !config.hosted })
 const platforms = createPlatforms({ db, activity, status, orchestrator })
 
-const agent = createAgent({ db, vault, activity, chrome, gmail, orchestrator, platforms, status, config })
+const agent = createAgent({ db, vault, activity, chrome, gmail, orchestrator, platforms, status, config, alerts })
 orchestrator.boot()
 const maintenance = createMaintenance({ db, activity, status, orchestrator, alerts, hooks: { feedQueue: () => agent.feedQueue() } })
 const manual = createManual({ db, activity, status, orchestrator, backlinks: agent.backlinks })
