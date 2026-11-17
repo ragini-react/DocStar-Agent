@@ -14,11 +14,12 @@ import { parseNeedsYou } from '../engine/status.js'
 import { signupSlot } from '../engine/rateLimit.js'
 import { toCsv } from '../platforms/service.js'
 import { resolveFinalUrl } from '../platforms/domains.js'
+import { actionPage, esc } from '../alerts/notify.js'
 
 const SESSION_MS = 12 * 3600_000
 const COOKIE = 'docstar_session'
 
-export function createApp({ config, db, vault, activity, gmail, chrome, orchestrator, platforms, agent, status, views, maintenance, manual, alerts = null, mirror = null, pusher = () => null }) {
+export function createApp({ config, db, vault, activity, gmail, chrome, orchestrator, platforms, agent, status, views, maintenance, manual, alerts = null, tokens = null, reports = null, mirror = null, pusher = () => null }) {
   const app = express()
   const sessions = new Map() // token -> expiresAt; in memory, so a restart signs everyone out
   const loginAttempts = new Map() // ip -> [timestamps]
@@ -61,6 +62,32 @@ export function createApp({ config, db, vault, activity, gmail, chrome, orchestr
     })
   }
   app.use(express.json({ limit: '64kb' }))
+
+  // One-click Resume from a notification: the signed, single-use token is the permission. Opening the link only shows
+  // what will happen; the button (a same-origin POST) does it. On a hosted copy the resume is queued for the agent.
+  app.get('/r/:token', (req, res) => {
+    try {
+      const t = tokens.verify(req.params.token)
+      const p = db.prepare('SELECT name, status, needs_you_reason FROM platforms WHERE id = ?').get(t.platformId)
+      if (!p) throw Object.assign(new Error('That platform no longer exists'), { status: 404 })
+      const ny = parseNeedsYou(p.needs_you_reason)
+      res.type('html').send(actionPage(`Resume ${p.name}?`, `<p class="muted">Status: ${esc(label(p.status))}</p>${ny ? `<p><b>What happened:</b> ${esc(ny.what)}</p><p><b>What to do:</b> ${esc(ny.todo)}</p>` : ''}
+        <form method="post"><button type="submit">I did it — resume</button></form>`))
+    } catch (e) { res.status(e.status || 400).type('html').send(actionPage('Link not usable', `<p>${esc(e.message)}</p><p><a href="/#queue">Open the dashboard</a></p>`)) }
+  })
+  app.post('/r/:token', express.urlencoded({ extended: false, limit: '1kb' }), wrap(async (req, res) => {
+    try {
+      const t = tokens.verify(req.params.token, { consume: true })
+      const name = db.prepare('SELECT name FROM platforms WHERE id = ?').get(t.platformId)?.name || 'The platform'
+      if (mirror?.on()) {
+        const c = mirror.queue('POST', `/api/platforms/${t.platformId}/resume`, {})
+        return res.type('html').send(actionPage('Resume sent', `<p>${esc(c.label)} is pending and runs as soon as the agent is online.</p><p><a href="/#queue">Open the dashboard</a></p>`))
+      }
+      orchestrator.resumePlatform(t.platformId, { actor: 'operator' })
+      activity.info('resumed_from_link', `${name}: resumed from a notification link`, { platformId: t.platformId })
+      res.type('html').send(actionPage('Resumed', `<p>${esc(name)} is back with the agent.</p><p><a href="/#queue">Open the dashboard</a></p>`))
+    } catch (e) { res.status(e.status || 400).type('html').send(actionPage('Could not resume', `<p>${esc(e.message)}</p><p><a href="/#queue">Open the dashboard</a></p>`)) }
+  }))
 
   const cookieOf = req => Object.fromEntries(String(req.headers.cookie || '').split(';').map(c => c.trim().split('=')).filter(([k]) => k))[COOKIE]
   const authed = req => {
@@ -286,6 +313,11 @@ export function createApp({ config, db, vault, activity, gmail, chrome, orchestr
   }))
   app.get('/api/needs-you', (req, res) => res.json(views.needsYou()))
   app.get('/api/added', (req, res) => res.json(views.added()))
+  app.get('/api/metrics', (req, res) => res.json(reports.metrics({ days: Math.min(Number(req.query.days) || 30, 365) })))
+  app.get('/api/summary', (req, res) => {
+    const s = reports.summary({ days: Math.min(Number(req.query.days) || 7, 90) })
+    res.json({ ...s, text: reports.render(s), alerts: alerts?.configured() ?? null, frequency: getSetting(db, 'summary_frequency', 'weekly') })
+  })
   app.get('/api/export/added.csv', (req, res) => {
     const a = views.added()
     const d = t => (t ? t.slice(0, 10) : '')
@@ -426,9 +458,15 @@ export function createApp({ config, db, vault, activity, gmail, chrome, orchestr
   const DEFAULTS = { require_approval: 1, min_quality_score: 55, discovery_batch: 10, max_signups_per_day: 10, parallel_tasks: 3, max_attempts: 5, stale_minutes: 30,
     backlink_recheck_live_hours: 24, backlink_recheck_pending_hours: 12, nofollow_counts_as_live: 1, auto_approve: 0, auto_approve_min_score: 65, offline_alert_minutes: 10, max_signups_per_hour: 3 }
   const settingValue = k => Number(getSetting(db, k, DEFAULTS[k]))
-  app.get('/api/settings', (req, res) => res.json(Object.fromEntries(Object.keys(SETTINGS).map(k => [k, settingValue(k)]))))
+  const TEXT_SETTINGS = { summary_frequency: ['off', 'daily', 'weekly'] }
+  const allSettings = () => ({ ...Object.fromEntries(Object.keys(SETTINGS).map(k => [k, settingValue(k)])), summary_frequency: getSetting(db, 'summary_frequency', 'weekly') })
+  app.get('/api/settings', (req, res) => res.json(allSettings()))
   app.patch('/api/settings', wrap(async (req, res) => {
     for (const [k, v] of Object.entries(req.body || {})) {
+      if (TEXT_SETTINGS[k]) {
+        if (!TEXT_SETTINGS[k].includes(v)) return res.status(400).json({ error: `${k} must be one of ${TEXT_SETTINGS[k].join(', ')}` })
+        setSetting(db, k, v); activity.info('setting_changed', `${k} set to ${v}`); continue
+      }
       const range = SETTINGS[k]
       const n = Number(v)
       if (!range) return res.status(400).json({ error: `Unknown setting ${k}` })
@@ -437,7 +475,7 @@ export function createApp({ config, db, vault, activity, gmail, chrome, orchestr
       activity.info('setting_changed', `${k} set to ${n}`)
     }
     orchestrator.wake() // a higher limit or more parallel slots may let waiting work start now
-    res.json(Object.fromEntries(Object.keys(SETTINGS).map(k => [k, settingValue(k)])))
+    res.json(allSettings())
   }))
 
   app.get('/api/health', (req, res) => res.json({ ok: true, db: db.prepare('SELECT 1 ok').get().ok === 1 }))

@@ -15,6 +15,7 @@ import { createListingFinder } from './listingFinder.js'
 import { createPlaybooks } from './playbooks.js'
 import { createEmailVerifier } from '../integrations/emailVerifier.js'
 import { createFollowUp } from './followUp.js'
+import { createAutoApproval } from './autoApproval.js'
 
 const DISCOVERY_EVERY_MS = 6 * 3600_000
 const BACKLINK_EVERY_MS = 10 * 60_000
@@ -30,14 +31,15 @@ export function submitStart(p, db) {
   return null
 }
 
-export function createAgent({ db, vault, activity, chrome, gmail, orchestrator, platforms, status, config, autoApproval = null, alerts = null }) {
+export function createAgent({ db, vault, activity, chrome, gmail, orchestrator, platforms, status, config, alerts = null }) {
   const ai = createAi({ config })
   const company = createCompany({ db, ai, activity })
   const listings = createListings({ db, ai, company })
+  const autoApproval = createAutoApproval({ db, company })
   const approvals = createApprovals({ db, activity, listings, orchestrator, status })
   const discovery = createDiscovery({ db, ai, platforms, activity })
   const browser = config.hosted ? null : chrome // a hosted copy has no Chrome: browser steps run elsewhere
-  const qualifier = createQualifier({ db, ai, activity, chrome: browser, listings, approvals, orchestrator, status, autoApproval: (...a) => autoApproval?.(...a) ?? { ok: false } })
+  const qualifier = createQualifier({ db, ai, activity, chrome: browser, listings, approvals, orchestrator, status, autoApproval })
   const backlinks = createBacklinkChecker({ db, chrome: browser, activity, status, alerts })
   const finder = createListingFinder({ ai })
   const playbooks = createPlaybooks({ db })

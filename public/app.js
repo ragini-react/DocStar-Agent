@@ -126,7 +126,7 @@ $('#logout').addEventListener('click', run(async () => { await api('/api/logout'
 
 // ---------- navigation ----------
 const TITLES = { overview: 'Overview', platforms: 'Platforms', queue: 'Needs you', added: 'Successfully added', failed: 'Failed', company: 'DocStar profile', activity: 'Activity',
-  integrations: 'Integrations', credentials: 'Credentials', settings: 'Settings' }
+  integrations: 'Integrations', credentials: 'Credentials', settings: 'Settings', health: 'Health' }
 const loaders = {}
 const currentView = () => { const v = location.hash.slice(1).split('?')[0] || 'overview'; return TITLES[v] ? v : 'overview' }
 const hashParams = () => new URLSearchParams(location.hash.split('?')[1] || '')
@@ -457,6 +457,23 @@ loaders.added = async () => {
     || '<tr><td colspan="4" class="muted">None.</td></tr>'
 }
 
+// ---------- health ----------
+loaders.health = async () => {
+  const days = $('#f-days').value
+  const [m, s] = await Promise.all([api(`/api/metrics?days=${days}`), api(`/api/summary?days=7`)])
+  const dur = mins => (mins == null ? '—' : mins < 60 ? `${mins} min` : mins < 2880 ? `${Math.round(mins / 60)} h` : `${Math.round(mins / 1440)} days`)
+  $('#stages').innerHTML = m.stages.map(r => `<tr><td>${esc(r.stage)}</td><td>${r.entered}</td><td>${r.succeeded}</td><td>${r.failed}</td><td>${r.inProgress}</td>
+    <td>${r.successRate == null ? '—' : `<span class="pill ${r.successRate >= 70 ? 'ok' : r.successRate >= 40 ? 'warn' : 'err'}">${r.successRate}%</span>`}</td><td>${dur(r.avgMinutes)}</td></tr>`).join('')
+  $('#reasons').innerHTML = m.failureReasons.map(r => `<li>${esc(r.reason)} <b>× ${r.count}</b></li>`).join('') || '<li class="muted">No failures.</li>'
+  $('#tph').textContent = `${m.tasksPerHour} tasks per hour over the last 24 hours`
+  $('#summary').textContent = s.text
+  $('#summary-freq').textContent = s.frequency === 'off' ? 'not sent' : `sent ${s.frequency}`
+  const a = s.alerts || {}
+  $('#alerts-config').textContent = a.slack || a.email ? `Alerts and summaries go to ${[a.slack && 'Slack', a.email && `email (${a.to})`].filter(Boolean).join(' and ')}.`
+    : 'No alert channel set: alerts appear in the activity log only. Set ALERT_SLACK_WEBHOOK and/or ALERT_EMAIL_WEBHOOK (see README).'
+}
+$('#f-days').addEventListener('change', run(loaders.health))
+
 // ---------- failed ----------
 loaders.failed = async () => {
   const rows = await api('/api/failed')
@@ -658,7 +675,7 @@ loaders.settings = async () => {
 $('#settings-form').addEventListener('submit', run(async e => {
   e.preventDefault()
   const body = {}
-  for (const el of e.target.elements) if (el.name) body[el.name] = el.type === 'checkbox' ? (el.checked ? 1 : 0) : Number(el.value)
+  for (const el of e.target.elements) if (el.name) body[el.name] = el.type === 'checkbox' ? (el.checked ? 1 : 0) : el.tagName === 'SELECT' ? el.value : Number(el.value)
   await act(e.target.querySelector('[type=submit]'), '/api/settings', { method: 'PATCH', body }, () => toast('Settings saved', 'ok'))
 }))
 

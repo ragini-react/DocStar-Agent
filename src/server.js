@@ -22,6 +22,9 @@ import { createAgent } from './agent/index.js'
 import { createMirrorPusher, createMirrorReceiver } from './sync/mirror.js'
 import { createAlerts } from './alerts/index.js'
 import { createManual } from './agent/manual.js'
+import { attachNeedsYouNotifications, createTokens } from './alerts/notify.js'
+import { createReports } from './reports/summary.js'
+import { createKeepAwake } from './engine/keepAwake.js'
 
 const config = loadConfig()
 const db = openDb(config.dbPath)
@@ -34,6 +37,14 @@ const views = createViews({ db })
 const gmail = createGmail({ db, vault, activity, viasocket, config })
 const chrome = createChrome({ config, activity })
 const orchestrator = createOrchestrator({ db, activity, chrome, status, browser: !config.hosted })
+const keepAwake = createKeepAwake({ activity })
+orchestrator.hooks.onStateChange = s => keepAwake.set(s === 'running')
+const tokens = createTokens({ db, secret: config.mirror.token || config.mirror.receiveToken || config.masterKey.toString('base64') })
+const reports = createReports({ db, views })
+// A hosted mirror does not notify: the agent does, once, for each new item.
+if (!config.hosted || !config.mirror.receiveToken) attachNeedsYouNotifications({ status, alerts, tokens })
+const summaryTimer = setInterval(() => { try { reports.sendIfDue(alerts) } catch (e) { activity.warn('summary_failed', `Summary failed: ${e.message}`) } }, 3600_000)
+summaryTimer.unref()
 const platforms = createPlatforms({ db, activity, status, orchestrator })
 
 const agent = createAgent({ db, vault, activity, chrome, gmail, orchestrator, platforms, status, config, alerts })
@@ -54,7 +65,7 @@ if (!config.hosted) {
 const mirrorReceiver = config.hosted && config.mirror.receiveToken ? createMirrorReceiver({ db, activity, token: config.mirror.receiveToken, alerts }) : null
 mirrorReceiver?.startWatch()
 let mirrorPusher = null
-const app = createApp({ config, db, vault, activity, gmail, chrome, orchestrator, platforms, agent, status, views, maintenance, manual, alerts, mirror: mirrorReceiver, pusher: () => mirrorPusher })
+const app = createApp({ config, db, vault, activity, gmail, chrome, orchestrator, platforms, agent, status, views, maintenance, manual, alerts, tokens, reports, mirror: mirrorReceiver, pusher: () => mirrorPusher })
 mirrorPusher = !config.hosted && config.mirror.url && config.mirror.token
   ? createMirrorPusher({ db, activity, chrome, gmail, orchestrator, replay: app.locals.replay, url: config.mirror.url, token: config.mirror.token, alerts })
   : null
@@ -71,6 +82,8 @@ for (const sig of ['SIGINT', 'SIGTERM']) {
     agent.shutdown()
     mirrorPusher?.shutdown()
     mirrorReceiver?.stopWatch()
+    keepAwake.stop()
+    clearInterval(summaryTimer)
     server.close()
     await chrome.close() // detach only; Chrome and its Google session stay open
     db.close()

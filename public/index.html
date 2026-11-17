@@ -30,6 +30,7 @@
         <a href="#failed" data-view="failed">Failed <span id="badge-failed" class="badge" hidden></span></a>
         <a href="#company" data-view="company">DocStar profile <span id="badge-company" class="badge" hidden>!</span></a>
         <a href="#activity" data-view="activity">Activity</a>
+        <a href="#health" data-view="health">Health</a>
         <a href="#integrations" data-view="integrations">Integrations</a>
         <a href="#credentials" data-view="credentials">Credentials</a>
         <a href="#settings" data-view="settings">Settings</a>
@@ -123,6 +124,15 @@
         <div class="card"><h2>Failures</h2><p class="muted">Every platform or run in a failed state, with the error, the step, when, and how many attempts were used. Retry runs it again from the right step.</p><div id="failed-list"></div></div>
       </section>
 
+      <section id="view-health" class="view" hidden>
+        <div class="toolbar"><select id="f-days"><option value="7">Last 7 days</option><option value="30" selected>Last 30 days</option><option value="90">Last 90 days</option></select><span id="tph" class="muted small"></span></div>
+        <div class="card table-wrap"><h2>Each stage</h2><table><thead><tr><th>Stage</th><th>Started</th><th>Succeeded</th><th>Failed</th><th>In progress</th><th>Success rate</th><th>Average time</th></tr></thead><tbody id="stages"></tbody></table></div>
+        <div class="grid-2">
+          <div class="card"><h2>Failure reasons</h2><ol id="reasons" class="history"></ol></div>
+          <div class="card"><h2>Summary <span id="summary-freq" class="pill"></span></h2><p id="alerts-config" class="muted small"></p><pre id="summary" class="summary"></pre></div>
+        </div>
+      </section>
+
       <section id="view-company" class="view" hidden>
         <div class="card">
           <div class="row" style="justify-content:space-between;align-items:center">
@@ -195,6 +205,7 @@
           <label>Minimum quality score to qualify <input name="min_quality_score" type="number" min="30" max="90" required></label>
           <label>Platforms per discovery run <input name="discovery_batch" type="number" min="3" max="20" required></label>
           <label>Alert when the agent is offline for (minutes) <input name="offline_alert_minutes" type="number" min="5" max="120" required></label>
+          <label>Send a summary <select name="summary_frequency"><option value="weekly">Weekly (Mondays)</option><option value="daily">Daily</option><option value="off">Never</option></select></label>
           <h2>Approvals</h2>
           <label class="check"><input name="require_approval" type="checkbox"> Approvals on (master switch): nothing is registered or submitted without an approval</label>
           <label class="check"><input name="auto_approve" type="checkbox"> Approve automatically when safe: only approved profile facts, free platform, no unusual requirements, and a score of at least</label>

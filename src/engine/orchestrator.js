@@ -49,12 +49,13 @@ export function createOrchestrator({ db, activity, chrome, status, browser = tru
   let scheduling = false
   let idleNoted = null
   let chromeDownNoted = false
-  const hooks = { onStart: null, onIdle: null, beforeBrowserTask: null }
+  const hooks = { onStart: null, onIdle: null, onStateChange: null }
 
   const state = () => getSetting(db, 'automation_state', 'stopped')
   const setState = s => {
     if (!STATES.includes(s)) throw new Error(`unknown state ${s}`)
     setSetting(db, 'automation_state', s)
+    try { hooks.onStateChange?.(s) } catch {}
   }
   const taskRow = id => db.prepare('SELECT * FROM automation_tasks WHERE id = ?').get(id)
   const policyOf = type => handlers.get(type)?.policy ?? DEFAULT_POLICY
