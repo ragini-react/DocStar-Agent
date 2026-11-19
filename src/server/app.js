@@ -341,7 +341,8 @@ export function createApp({ config, db, vault, activity, gmail, chrome, orchestr
     const a = views.added()
     const d = t => (t ? t.slice(0, 10) : '')
     const ms = (r, k) => d(r.timeline.find(x => x.key === k)?.at)
-    const rows = [...a.live.map(r => ({ ...r, group: 'Live with backlink' })), ...a.published.map(r => ({ ...r, group: 'Published, backlink not found yet' }))]
+    const rows = [...a.live.map(r => ({ ...r, group: 'Live with backlink' })), ...a.published.map(r => ({ ...r, group: 'Published, backlink not counted yet' })),
+      ...a.awaiting.map(r => ({ ...r, group: 'Submitted, awaiting platform review' }))]
     const cols = [['Group', 'group'], ['Platform', 'name'], ['Domain', 'domain'], ['Listing URL', 'listing_url'], ['Backlink page', 'backlink_page'],
       ['Link', r => (r.backlink_status === 'live' ? (r.is_dofollow ? 'dofollow' : r.rel || 'nofollow') : '')], ['Anchor text', 'anchor_text'],
       ['Found', 'found'], ['First verified', r => d(r.first_seen_at)], ['Last re-verified', r => d(r.last_checked_at)], ['Account', 'account_email'],

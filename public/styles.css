@@ -203,3 +203,16 @@ tr.flash { animation: flash 1.2s ease-out; }
 .activity-chips .chip b { font-variant-numeric: tabular-nums; }
 .activity-chips .chip.active { border-color: currentColor; font-weight: 600; }
 .new-tag { margin-left: 6px; }
+
+/* Status board */
+.process-steps { list-style: none; counter-reset: step; display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; padding: 0; margin: 8px 0; }
+.process-steps li { counter-increment: step; border: 1px solid var(--border, #ddd); border-radius: 8px; padding: 8px 10px; }
+.process-steps li::before { content: counter(step); display: inline-block; width: 1.5em; height: 1.5em; line-height: 1.5em; text-align: center; border-radius: 50%; background: var(--accent, #3b6); color: #fff; font-size: 12px; margin-right: 6px; }
+.process-steps b { font-size: 14px; }
+.process-steps span { display: block; font-size: 12px; opacity: .75; margin-top: 4px; }
+.al-group h2 { display: flex; align-items: center; gap: 8px; }
+.al-help { display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; font-size: 13px; margin: 0 0 10px; }
+.al-help dt { font-weight: 600; opacity: .7; }
+.al-help dd { margin: 0; }
+.al-group td.note { max-width: 380px; font-size: 13px; }
+@media (max-width: 640px) { .al-help { grid-template-columns: 1fr; } }

@@ -1,7 +1,7 @@
 // Product activity list, the processed-URL guard and the DocStar brand name.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { activityGroup } from '../../src/engine/stateMachine.js'
+import { ACTIVITY_GROUPS, ACTIVITY_HELP, ACTIVITY_LABELS, STATUSES, activityGroup } from '../../src/engine/stateMachine.js'
 import { BRAND, SITE_URL, brand, brandAll, canonicalUrl, hasWrongBrand, isSiteUrl } from '../../src/agent/brand.js'
 import { analyseLinks } from '../../src/agent/backlinks.js'
 import { createCompany } from '../../src/agent/company.js'
@@ -9,18 +9,22 @@ import { fill } from '../../src/agent/browserAgent.js'
 import { cleanListingUrl, isPrivateUrl, notLiveYet, pageShowsListing, publicListingUrl } from '../../src/agent/listingUrl.js'
 import { setup, platformAt } from '../helpers/setup.js'
 
-test('activity groups: new, pending, added, published, backlink completed, skipped', () => {
+test('activity groups follow the process: every status in exactly one group, with help text', () => {
   const g = s => activityGroup(s)
-  assert.equal(g('discovered'), 'new')
-  assert.equal(g('qualifying'), 'new')
-  for (const s of ['qualified', 'approval_required', 'approved', 'registering', 'submitting', 'submission_failed', 'evaluation_failed']) assert.equal(g(s), 'pending', s)
-  assert.equal(g('submitted'), 'product_added')
-  assert.equal(g('pending_platform_review'), 'product_added')
-  for (const s of ['published', 'no_backlink', 'backlink_lost']) assert.equal(g(s), 'product_published', s)
+  for (const s of ['discovered', 'qualifying']) assert.equal(g(s), 'new', s)
+  assert.equal(g('approval_required'), 'your_approval')
+  for (const s of ['qualified', 'listing_drafted', 'approved', 'registering', 'registered', 'email_verification_pending', 'ready_for_submission', 'submitting']) assert.equal(g(s), 'in_progress', s)
+  for (const s of ['evaluation_failed', 'registration_failed', 'submission_failed']) assert.equal(g(s), 'failed', s)
+  for (const s of ['needs_you', 'blocked']) assert.equal(g(s), 'needs_you', s)
+  for (const s of ['submitted', 'pending_platform_review']) assert.equal(g(s), 'product_added', s)
+  for (const s of ['published', 'no_backlink']) assert.equal(g(s), 'product_published', s)
+  assert.equal(g('backlink_lost'), 'backlink_lost')
   assert.equal(g('live_backlink'), 'backlink_completed')
-  for (const s of ['rejected', 'paid_skipped', 'rejected_by_platform', 'blocked']) assert.equal(g(s), 'skipped', s)
-  // A paused platform counts where it will resume.
-  assert.equal(activityGroup({ status: 'needs_you', resume_status: 'submitting' }), 'pending')
+  for (const s of ['rejected', 'paid_skipped', 'rejected_by_platform']) assert.equal(g(s), 'skipped', s)
+  // A paused platform is shown under Needs you, whatever step it stopped at.
+  assert.equal(activityGroup({ status: 'needs_you', resume_status: 'submitting' }), 'needs_you')
+  for (const s of STATUSES) assert.ok(ACTIVITY_GROUPS.includes(g(s)), s)
+  for (const k of ACTIVITY_GROUPS) assert.ok(ACTIVITY_LABELS[k] && ACTIVITY_HELP[k].means && ACTIVITY_HELP[k].next && ACTIVITY_HELP[k].who, k)
 })
 
 test('processed URLs are never qualified, drafted or submitted again', () => {
@@ -49,7 +53,9 @@ test('product activity list: one row per URL, counts, new since last visit', () 
   const a = t.views.productActivity({ since })
   assert.equal(a.items.length, 6)
   assert.equal(new Set(a.items.map(i => i.platform_id)).size, 6)
-  assert.deepEqual(a.counts, { new: 1, pending: 1, product_added: 1, product_published: 1, backlink_completed: 1, skipped: 1 })
+  assert.deepEqual(a.counts, { new: 1, your_approval: 0, in_progress: 1, needs_you: 0, failed: 0, product_added: 1, product_published: 1, backlink_completed: 1, backlink_lost: 0, skipped: 1 })
+  assert.equal(a.total, 6)
+  assert.ok(a.groups.every(g => !/\{\{/.test(g.help.means)), 'brand placeholders filled')
   assert.equal(a.newSinceLastVisit, 1)
   assert.equal(a.items.find(i => i.newSinceLastVisit).platform_id, fresh)
   assert.equal(t.views.productActivity().newSinceLastVisit, 0)

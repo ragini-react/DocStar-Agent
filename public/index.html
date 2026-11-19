@@ -26,7 +26,7 @@
         <a href="#overview" data-view="overview">Overview</a>
         <a href="#platforms" data-view="platforms">Platforms</a>
         <a href="#queue" data-view="queue">Needs you <span id="badge-queue" class="badge" hidden></span></a>
-        <a href="#activity-list" data-view="activity-list">Product activity <span id="badge-activity-list" class="badge ok" hidden></span></a>
+        <a href="#activity-list" data-view="activity-list">Status board <span id="badge-activity-list" class="badge ok" hidden></span></a>
         <a href="#added" data-view="added">Successfully added <span id="badge-added" class="badge ok" hidden></span></a>
         <a href="#failed" data-view="failed">Failed <span id="badge-failed" class="badge" hidden></span></a>
         <a href="#company" data-view="company">{{BRAND}} profile <span id="badge-company" class="badge" hidden>!</span></a>
@@ -120,20 +120,33 @@
       </section>
 
       <section id="view-activity-list" class="view" hidden>
+        <div class="card process">
+          <h2>How a platform moves through the process</h2>
+          <ol class="process-steps">
+            <li><b>Discover &amp; evaluate</b><span>Agent finds the site and checks it is legitimate, relevant and free.</span></li>
+            <li><b>Approve the listing</b><span>You approve the drafted text (skipped when auto-approval is on).</span></li>
+            <li><b>Sign up &amp; submit</b><span>Agent creates the account, verifies email and fills the form.</span></li>
+            <li><b>Platform review</b><span>The platform moderates the submission. Can take days or weeks.</span></li>
+            <li><b>Published</b><span>A public page shows the product. Agent finds it and checks the link.</span></li>
+            <li><b>Backlink live</b><span>Link to the site verified on an indexable page. Done; re-checked daily.</span></li>
+          </ol>
+          <p class="muted small">At any step the agent may stop for you (<b>Needs you</b>) or a step may <b>fail</b>. Only steps 5–6 count as <b>Successfully added</b>; step 4 counts as submitted.</p>
+        </div>
         <div class="toolbar">
           <div id="al-filters" class="activity-chips" role="tablist"></div>
           <span class="spacer"></span>
           <input id="al-search" type="search" placeholder="Search name or URL" aria-label="Search URLs">
         </div>
         <p id="al-note" class="muted small"></p>
-        <div class="card table-wrap"><table><thead><tr><th>Website</th><th>Activity</th><th>Status</th><th>Listing / backlink</th><th>Discovered</th><th>Last change</th></tr></thead><tbody id="al-rows"></tbody></table></div>
+        <div id="al-groups"></div>
       </section>
 
       <section id="view-added" class="view" hidden>
         <div class="toolbar"><p class="muted small" style="margin:0">Everything the agent (or a person) finished, verified independently. Live links are re-checked on a schedule.</p><span class="spacer"></span><a class="btn" href="/api/export/added.csv">Export CSV</a></div>
         <div class="card"><h2>Live with backlink <span id="added-live-n" class="pill ok"></span></h2><div class="table-wrap"><table class="added"><thead><tr><th>Platform</th><th>Listing</th><th>Backlink</th><th>Link</th><th>Anchor text</th><th>First verified</th><th>Last re-verified</th><th>Account</th></tr></thead><tbody id="added-live"></tbody></table></div></div>
-        <div class="card"><h2>Published, backlink not found yet <span id="added-pub-n" class="pill warn"></span></h2><div class="table-wrap"><table class="added"><thead><tr><th>Platform</th><th>Listing</th><th>What was found</th><th>Last checked</th><th>Account</th></tr></thead><tbody id="added-pub"></tbody></table></div></div>
-        <p class="muted small">Only listings verified on a public page appear here. Submissions still waiting for the platform are under <a href="#activity-list">Product activity</a> → Submitted, not listed yet.</p>
+        <div class="card"><h2>Published, backlink not counted yet <span id="added-pub-n" class="pill warn"></span></h2><div class="table-wrap"><table class="added"><thead><tr><th>Platform</th><th>Listing</th><th>What was found</th><th>Last checked</th><th>Account</th></tr></thead><tbody id="added-pub"></tbody></table></div></div>
+        <div class="card"><h2>Submitted, awaiting platform review <span id="added-wait-n" class="pill info"></span></h2><p class="muted small">Submitted successfully, but the platform has not published a public listing yet. These move up automatically once the listing page is found.</p><div class="table-wrap"><table class="added"><thead><tr><th>Platform</th><th>Submitted</th><th>Waiting</th><th>Account</th></tr></thead><tbody id="added-wait"></tbody></table></div></div>
+        <p class="muted small">Only listings verified on a public page appear here. Submissions still waiting for the platform are listed below and on the <a href="#activity-list">Status board</a>.</p>
       </section>
 
       <section id="view-failed" class="view" hidden>

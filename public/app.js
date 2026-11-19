@@ -126,7 +126,7 @@ $('#login-form').addEventListener('submit', run(async e => {
 $('#logout').addEventListener('click', run(async () => { await api('/api/logout', { method: 'POST' }); showLogin() }))
 
 // ---------- navigation ----------
-const TITLES = { overview: 'Overview', 'activity-list': 'Product Activity List', platforms: 'Platforms', queue: 'Needs you', added: 'Successfully added', failed: 'Failed', company: `${BRAND} profile`, activity: 'Activity',
+const TITLES = { overview: 'Overview', 'activity-list': 'Status board', platforms: 'Platforms', queue: 'Needs you', added: 'Successfully added', failed: 'Failed', company: `${BRAND} profile`, activity: 'Activity',
   integrations: 'Integrations', credentials: 'Credentials', settings: 'Settings', health: 'Health' }
 const loaders = {}
 let pendingActivityPlatform = null
@@ -188,8 +188,9 @@ const KPIS = [
   ['discovered', 'Platforms discovered', '', '#platforms'], ['qualified', 'Qualified', '', '#platforms'], ['freeSelected', 'Free platforms selected'],
   ['paidSkipped', 'Paid, skipped', '', '#platforms?status=paid_skipped'], ['registered', 'Accounts registered', '', '#credentials'],
   ['inProgress', 'In progress', '', '#platforms?group=in_progress'], ['awaitingYou', 'Awaiting your approval', 'alert', '#queue'],
-  ['approvedWaiting', 'Approved, not yet submitted', '', '#platforms?group=pipeline'], ['successfullyAdded', 'Successfully added', 'accent', '#added'],
-  ['pendingPlatformApproval', 'Awaiting platform review', '', '#platforms?status=pending_platform_review'], ['liveBacklinks', 'Live backlinks', 'accent', '#platforms?status=live_backlink'],
+  ['approvedWaiting', 'Approved, not yet submitted', '', '#platforms?group=pipeline'],
+  ['submitted', 'Submitted in total (listed + awaiting review)', '', '#added'], ['successfullyAdded', 'Successfully added (public listing)', 'accent', '#added'],
+  ['pendingPlatformApproval', 'Submitted, awaiting platform review', '', '#added'], ['liveBacklinks', 'Live backlinks', 'accent', '#platforms?status=live_backlink'],
   ['dofollow', 'Dofollow', 'accent'], ['nofollow', 'Nofollow'], ['lost', 'Backlinks lost', 'alert', '#platforms?status=backlink_lost'],
   ['failed', 'Failed', 'alert', '#failed'], ['needsYou', 'Needs you', 'alert', '#queue']
 ]
@@ -212,32 +213,53 @@ loaders.overview = async () => {
 
 // ---------- product activity list ----------
 // "New since your last visit" is remembered per browser; the groups themselves come from the server.
-const AL_TONE = { new: 'info', pending: 'warn', product_added: 'info', product_published: 'ok', backlink_completed: 'ok', skipped: '' }
+const AL_TONE = { new: 'info', your_approval: 'warn', in_progress: 'info', needs_you: 'warn', failed: 'err', product_added: 'info',
+  product_published: 'warn', backlink_completed: 'ok', backlink_lost: 'err', skipped: '' }
 const AL_SEEN_KEY = 'docstar.activityListSeenAt'
 const store = { get(k) { try { return localStorage.getItem(k) } catch { return null } }, set(k, v) { try { localStorage.setItem(k, v) } catch {} } }
-let alFilter = 'open'
+let alFilter = 'active'
 let alData = null
 let alSince = null
+const AL_DONE = new Set(['skipped'])
 function alChips(el, data, active, withAll) {
-  const chips = [...(withAll ? [{ key: 'open', label: 'New & pending', n: data.counts.new + data.counts.pending }, { key: 'all', label: 'All', n: data.items.length }] : []),
-    ...data.groups.filter(g => withAll || g.key !== 'skipped').map(g => ({ ...g, n: data.counts[g.key] }))]
-  el.innerHTML = chips.map(c => `<button type="button" class="chip ${c.key === active ? 'active' : ''}" data-group="${c.key}">${esc(c.label)} <b>${c.n}</b></button>`).join('')
+  const activeN = data.items.filter(i => !AL_DONE.has(i.group)).length
+  const chips = [...(withAll ? [{ key: 'active', label: 'All except skipped', n: activeN }, { key: 'all', label: 'Everything', n: data.items.length }] : []),
+    ...data.groups.filter(g => withAll || (g.key !== 'skipped' && data.counts[g.key])).map(g => ({ ...g, n: data.counts[g.key] }))]
+  el.innerHTML = chips.map(c => `<button type="button" class="chip ${c.key === active ? 'active' : ''} ${AL_TONE[c.key] ? `tone-${AL_TONE[c.key]}` : ''}" data-group="${c.key}">${esc(c.label)} <b>${c.n}</b></button>`).join('')
+}
+function alRow(i) {
+  const d = t => (t ? esc(t.slice(0, 10)) : '—')
+  const links = [i.listing_url && `<a href="${esc(i.listing_url)}" target="_blank" rel="noopener">Listing page</a>`,
+    i.backlink_page && i.backlink_page !== i.listing_url && `<a href="${esc(i.backlink_page)}" target="_blank" rel="noopener">Backlink page</a>`,
+    i.backlink_rel != null && i.backlink_status === 'live' && `<span class="sub">${esc(i.is_dofollow ? 'dofollow' : i.backlink_rel || 'nofollow')}</span>`,
+    i.indexable === 0 && '<span class="sub">page is noindex</span>'].filter(Boolean).join('<br>')
+  const dates = [['Found', i.created_at], ['Submitted', i.submitted_at], ['Published', i.published_at], ['Link live', i.backlink_at]].filter(([, t]) => t)
+  return `<tr>
+    <td><strong class="platform-link" data-drawer="${i.platform_id}">${esc(i.name)}</strong>${i.newSinceLastVisit ? ' <span class="pill info new-tag">New</span>' : ''}
+      <div class="muted small"><a href="${esc(i.url)}" target="_blank" rel="noopener">${esc(i.domain)}</a></div></td>
+    <td>${esc(i.statusLabel)}${i.stoppedAt ? `<div class="sub">stopped at: ${esc(i.stoppedAt)}</div>` : ''}</td>
+    <td class="note">${i.note ? esc(i.note) : '<span class="muted">—</span>'}${i.todo ? `<div class="sub"><b>To do:</b> ${esc(i.todo)}</div>` : ''}</td>
+    <td>${links || '<span class="muted">—</span>'}</td>
+    <td>${i.account_email ? `${esc(i.account_email)}${i.login_method ? `<div class="sub">${esc(label(i.login_method))}</div>` : ''}` : '<span class="muted">—</span>'}</td>
+    <td class="small">${dates.map(([k, t]) => `${k}: ${d(t)}`).join('<br>')}<div class="sub">Last change: ${d(i.status_changed_at)}</div></td></tr>`
 }
 function renderActivityList() {
   if (!alData) return
   alChips($('#al-filters'), alData, alFilter, true)
   const q = $('#al-search').value.trim().toLowerCase()
-  const rows = alData.items.filter(i => (alFilter === 'all' || (alFilter === 'open' ? ['new', 'pending'].includes(i.group) : i.group === alFilter))
-    && (!q || `${i.name} ${i.url} ${i.domain}`.toLowerCase().includes(q)))
-  const d = t => (t ? esc(t.slice(0, 10)) : '—')
-  $('#al-note').textContent = alData.newSinceLastVisit ? `${alData.newSinceLastVisit} URL(s) discovered since your last visit are marked "New since last visit".` : 'No new URLs since your last visit.'
-  $('#al-rows').innerHTML = rows.length ? rows.map(i => `<tr>
-      <td><strong class="platform-link" data-drawer="${i.platform_id}">${esc(i.name)}</strong>${i.newSinceLastVisit ? '<span class="pill info new-tag">New since last visit</span>' : ''}<div class="muted small"><a href="${esc(i.url)}" target="_blank" rel="noopener">${esc(i.domain)}</a></div></td>
-      <td><span class="pill ${AL_TONE[i.group] || ''}">${esc(i.groupLabel)}</span></td>
-      <td>${esc(i.statusLabel)}</td>
-      <td>${i.backlink_page ? `<a href="${esc(i.backlink_page)}" target="_blank" rel="noopener">Backlink page</a>` : i.listing_url ? `<a href="${esc(i.listing_url)}" target="_blank" rel="noopener">Listing</a>` : '<span class="muted">—</span>'}</td>
-      <td>${d(i.created_at)}</td><td>${d(i.status_changed_at)}</td></tr>`).join('')
-    : '<tr><td colspan="6" class="muted">Nothing in this group.</td></tr>'
+  const shown = g => alFilter === 'all' || (alFilter === 'active' ? !AL_DONE.has(g) : g === alFilter)
+  const match = i => !q || `${i.name} ${i.url} ${i.domain}`.toLowerCase().includes(q)
+  $('#al-note').textContent = `${alData.total} platforms in total, each in exactly one group below.` + (alData.newSinceLastVisit ? ` ${alData.newSinceLastVisit} found since your last visit are marked "New".` : '')
+  const sections = alData.groups.filter(g => shown(g.key)).map(g => {
+    const rows = alData.items.filter(i => i.group === g.key && match(i))
+    if (!rows.length && (q || alFilter === 'active' || alFilter === 'all')) return ''
+    return `<div class="card al-group" id="al-${g.key}">
+      <h2><span class="pill ${AL_TONE[g.key] || ''}">${rows.length}</span> ${esc(g.label)}</h2>
+      <dl class="al-help"><dt>What it means</dt><dd>${esc(g.help.means)}</dd><dt>What happens next</dt><dd>${esc(g.help.next)}</dd><dt>Who acts</dt><dd>${esc(g.help.who)}</dd></dl>
+      ${rows.length ? `<div class="table-wrap"><table><thead><tr><th>Platform</th><th>Exact status</th><th>Latest note</th><th>Listing / backlink</th><th>Account</th><th>Dates</th></tr></thead>
+        <tbody>${rows.map(alRow).join('')}</tbody></table></div>` : '<p class="muted small">Nothing here right now.</p>'}</div>`
+  }).join('')
+  $('#al-groups').innerHTML = sections || '<p class="muted">Nothing matches.</p>'
 }
 loaders['activity-list'] = async ({ soft = false } = {}) => {
   if (!soft) alSince = store.get(AL_SEEN_KEY)
@@ -504,11 +526,13 @@ loaders.added = async () => {
   const name = r => `<strong class="platform-link" data-drawer="${r.platform_id}">${esc(r.name)}</strong><div class="sub">${esc(r.domain)}</div>${timeline(r.timeline)}`
   $('#added-live-n').textContent = a.live.length
   $('#added-pub-n').textContent = a.published.length
+  $('#added-wait-n').textContent = a.awaiting.length
   $('#added-live').innerHTML = a.live.map(r => `<tr><td>${name(r)}</td><td>${link(r.listing_url, 'listing')}</td><td>${link(r.backlink_page, 'page')}</td>
     <td><span class="pill ${r.is_dofollow ? 'ok' : ''}">${esc(r.is_dofollow ? 'dofollow' : r.rel || 'nofollow')}</span>${r.link_count > 1 ? `<div class="sub">${r.link_count} links</div>` : ''}</td>
     <td>${esc(r.anchor_text || '—')}</td><td>${fmtDate(r.first_seen_at)}</td><td>${fmtTime(r.last_checked_at)}</td><td>${who(r)}</td></tr>`).join('') || '<tr><td colspan="8" class="muted">No live backlinks yet.</td></tr>'
   $('#added-pub').innerHTML = a.published.map(r => `<tr><td>${name(r)}</td><td>${link(r.listing_url, 'listing')}</td><td>${esc(r.found)}</td><td>${fmtTime(r.last_checked_at)}</td><td>${who(r)}</td></tr>`).join('')
     || '<tr><td colspan="5" class="muted">None.</td></tr>'
+  $('#added-wait').innerHTML = a.awaiting.map(r => `<tr><td>${name(r)}</td><td>${fmtDate(r.submitted_at)}</td><td>${r.waitingDays == null ? '—' : `${r.waitingDays} day${r.waitingDays === 1 ? '' : 's'}`}</td><td>${who(r)}</td></tr>`).join('')
     || '<tr><td colspan="4" class="muted">None.</td></tr>'
 }
 

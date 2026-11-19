@@ -75,7 +75,7 @@ export function createReports({ db, views }) {
     const list = (title, items) => `${title} (${items.length})${items.length ? '\n' + items.slice(0, 25).map(i => `  • ${i}`).join('\n') + (items.length > 25 ? `\n  … and ${items.length - 25} more` : '') : ''}`
     return [s.period, '', list('New platforms', s.added), list('Submitted', s.submitted), list('Published', s.published), list('Backlinks went live', s.live),
       list('Failures', s.failed), list('Needs you', s.needsYou), list('Backlinks lost', s.lost), '', 'SUCCESSFULLY ADDED',
-      list('Live with backlink', s.successfullyAdded.live), list('Published, backlink not found yet', s.successfullyAdded.published),
+      list('Live with backlink', s.successfullyAdded.live), list('Published, backlink not counted yet', s.successfullyAdded.published),
       list('Submitted, awaiting platform review', s.successfullyAdded.awaiting)].join('\n')
   }
 

@@ -78,19 +78,42 @@ export const PAUSED = new Set(['needs_you', 'blocked'])
 
 // Product activity list: one group per URL, from its status. A URL whose product was added, published or whose backlink
 // is live is processed: it is never qualified, drafted or submitted again (see orchestrator.enqueue).
-export const ACTIVITY_GROUPS = ['new', 'pending', 'product_added', 'product_published', 'backlink_completed', 'skipped']
-export const ACTIVITY_LABELS = { new: 'New', pending: 'Pending', product_added: 'Submitted, not listed yet', product_published: 'Product published',
-  backlink_completed: 'Backlink completed', skipped: 'Skipped' }
+// The groups follow the process in order, so reading them top to bottom is reading the workflow. Every status belongs to
+// exactly one group; each group says what it means, what happens next and who acts.
+export const ACTIVITY_GROUPS = ['new', 'your_approval', 'in_progress', 'needs_you', 'failed', 'product_added', 'product_published',
+  'backlink_completed', 'backlink_lost', 'skipped']
+export const ACTIVITY_LABELS = {
+  new: 'New: being evaluated', your_approval: 'Waiting for your approval', in_progress: 'In progress', needs_you: 'Needs you',
+  failed: 'Failed', product_added: 'Submitted, awaiting platform review', product_published: 'Published, backlink not counted yet',
+  backlink_completed: 'Live backlink (done)', backlink_lost: 'Backlink lost', skipped: 'Skipped / rejected'
+}
+export const ACTIVITY_HELP = {
+  new: { means: 'Found by discovery. The agent is checking whether the site is legitimate, relevant and free.', next: 'Qualified sites get a listing drafted; the rest are skipped.', who: 'Agent' },
+  your_approval: { means: 'A listing has been drafted and is waiting for a person to approve it.', next: 'Approve or edit it in Needs you; the agent then signs up and submits.', who: 'You' },
+  in_progress: { means: 'The agent is working on it: drafting, creating the account, verifying email or filling the submission form.', next: 'Moves to Submitted when the platform confirms, or to Needs you / Failed if it gets stuck.', who: 'Agent' },
+  needs_you: { means: 'The agent stopped at something only a person can do (CAPTCHA, sign-in, payment, missing fact).', next: 'Do the step shown, then press Resume; the agent continues from where it stopped.', who: 'You' },
+  failed: { means: 'A step failed after all retries.', next: 'Retry it, mark it as needs you, or reject it. Evaluation failures are retried automatically after a day.', who: 'You' },
+  product_added: { means: 'Submitted successfully, but the platform has not published a public {{BRAND}} page yet (often a moderation queue).', next: 'The agent searches for the public listing on a schedule and moves it up when found.', who: 'Platform' },
+  product_published: { means: 'A public {{BRAND}} page exists, but the link does not count yet (no link, nofollow, or the page is noindex).', next: 'Re-checked every 12 hours; becomes Live backlink when the link qualifies.', who: 'Agent re-checks' },
+  backlink_completed: { means: 'Public listing with a verified link to {{SITE_HOST}}. Finished.', next: 'Re-checked every 24 hours; an alert is raised if the link disappears.', who: 'Nobody' },
+  backlink_lost: { means: 'The link was live before and has since disappeared or changed.', next: 'Check the listing; contact the platform or fix the listing.', who: 'You' },
+  skipped: { means: 'Not pursued: rejected at evaluation, paid only, a duplicate, or turned down by the platform.', next: 'Nothing. You can re-open one from the platform drawer if needed.', who: 'Nobody' }
+}
 export const PROCESSED = SUCCESS
-/** Pure: the activity group of a platform row ({ status, resume_status }). */
+/** Pure: the activity group of a platform row ({ status, resume_status }) or a status string. */
 export function activityGroup(row) {
+  const raw = typeof row === 'string' ? row : row.status
+  if (PAUSED.has(raw)) return 'needs_you' // stopped for a person, whatever step it stopped at
   const s = typeof row === 'string' ? row : effectiveStatus(row)
   if (s === 'live_backlink') return 'backlink_completed'
-  if (s === 'published' || s === 'no_backlink' || s === 'backlink_lost') return 'product_published'
+  if (s === 'backlink_lost') return 'backlink_lost'
+  if (s === 'published' || s === 'no_backlink') return 'product_published'
   if (s === 'submitted' || s === 'pending_platform_review') return 'product_added'
   if (s === 'discovered' || s === 'qualifying') return 'new'
-  if (DONE_NEGATIVE.has(s) || s === 'blocked') return 'skipped'
-  return 'pending'
+  if (s === 'approval_required') return 'your_approval'
+  if (FAILED.has(s)) return 'failed'
+  if (DONE_NEGATIVE.has(s)) return 'skipped'
+  return 'in_progress'
 }
 
 const T = {

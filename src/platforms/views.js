@@ -1,9 +1,9 @@
 // One source of truth for every list the dashboard shows and every count on the overview: each card's number is the
 // length of the list it opens, computed by the same function, so the two can never disagree.
 import { numSetting } from '../db/index.js'
-import { ACTIVITY_GROUPS, ACTIVITY_LABELS, FAILED, IN_PROGRESS, activityGroup, label } from '../engine/stateMachine.js'
+import { ACTIVITY_GROUPS, ACTIVITY_HELP, ACTIVITY_LABELS, FAILED, IN_PROGRESS, activityGroup, label } from '../engine/stateMachine.js'
 import { parseNeedsYou } from '../engine/status.js'
-import { SITE_HOST } from '../agent/brand.js'
+import { SITE_HOST, fillBrand } from '../agent/brand.js'
 
 const PIPELINE = ['approved', 'registering', 'registered', 'email_verification_pending', 'ready_for_submission', 'submitting']
 const inList = arr => arr.map(() => '?').join(',')
@@ -68,8 +68,11 @@ export function createViews({ db }) {
     const live = rows.filter(r => r.status === 'live_backlink')
     const published = rows.filter(r => r.status === 'published' || r.status === 'no_backlink').map(r => ({
       ...r,
-      found: r.backlink_status === 'missing' ? (r.http_status ? `Page answers HTTP ${r.http_status}; no link to ${SITE_HOST} on it` : `No link to ${SITE_HOST} found`)
-        : r.is_dofollow === 0 ? `Link present but ${r.rel || 'nofollow'}` : r.indexable === 0 ? 'Link present but the page is noindex' : r.last_checked_at ? 'Checked; not live yet' : 'Not checked yet'
+      // A link that is on the page (backlink_target / link_count) is never reported as missing; say why it does not count.
+      found: (r.backlink_target || r.link_count > 0)
+        ? [r.is_dofollow === 0 && `Link present but ${r.rel || 'nofollow'}`, r.indexable === 0 && 'the page is noindex'].filter(Boolean).join('; ').replace(/^the/, 'Link present but the') || 'Link present; not live yet'
+        : r.backlink_status === 'missing' ? (r.http_status ? `Page answers HTTP ${r.http_status}; no link to ${SITE_HOST} on it` : `No link to ${SITE_HOST} found`)
+        : r.last_checked_at ? 'Checked; not live yet' : 'Not checked yet'
     }))
     const awaiting = rows.filter(r => r.status === 'submitted' || r.status === 'pending_platform_review').map(r => ({
       ...r, waitingDays: r.submitted_at ? Math.floor((nowMs - Date.parse(r.submitted_at)) / 86400_000) : null
@@ -107,21 +110,32 @@ export function createViews({ db }) {
    * backlink completed, skipped). `since` (ISO time) marks URLs discovered after it as new since the last visit.
    */
   function productActivity({ since = null } = {}) {
-    const rows = db.prepare(`SELECT p.id platform_id, p.name, p.url, p.domain, p.status, p.resume_status, p.created_at, p.status_changed_at,
-        s.listing_url, s.submitted_at, s.published_at, b.page_url backlink_page, b.first_seen_at backlink_at, b.status backlink_status
+    const rows = db.prepare(`SELECT p.id platform_id, p.name, p.url, p.domain, p.status, p.resume_status, p.needs_you_reason, p.created_at, p.status_changed_at,
+        s.listing_url, s.submitted_at, s.published_at, b.page_url backlink_page, b.first_seen_at backlink_at, b.status backlink_status,
+        b.rel backlink_rel, b.is_dofollow, b.indexable, b.last_checked_at, a.email account_email, a.login_method,
+        (SELECT x.reason FROM platform_transitions x WHERE x.platform_id = p.id ORDER BY x.id DESC LIMIT 1) last_reason,
+        (SELECT x.reason FROM platform_transitions x WHERE x.platform_id = p.id AND x.actor = 'agent'
+          AND x.to_status IN ('submitted','pending_platform_review','published') ORDER BY x.id DESC LIMIT 1) submit_reason
       FROM platforms p LEFT JOIN submissions s ON s.platform_id = p.id LEFT JOIN backlinks b ON b.submission_id = s.id
+      LEFT JOIN accounts a ON a.platform_id = p.id
       ORDER BY COALESCE(p.status_changed_at, p.created_at) DESC`).all()
     const seen = new Set()
     const items = []
     for (const r of rows) {
-      if (seen.has(r.platform_id)) continue // one row per URL, even with several submissions
+      if (seen.has(r.platform_id)) continue // one row per URL, even with several submissions or accounts
       seen.add(r.platform_id)
       const group = activityGroup(r)
-      items.push({ ...r, group, groupLabel: ACTIVITY_LABELS[group], statusLabel: label(r.status),
+      const ny = r.status === 'needs_you' ? parseNeedsYou(r.needs_you_reason) : null
+      const { needs_you_reason, submit_reason, ...rest } = r
+      items.push({ ...rest, group, groupLabel: ACTIVITY_LABELS[group], statusLabel: label(r.status),
+        stoppedAt: r.resume_status && r.status !== r.resume_status ? label(r.resume_status) : null,
+        note: ny?.what || (group === 'product_added' && r.submit_reason) || r.last_reason || null, // awaiting: what the platform said on submit todo: ny?.todo || null,
         newSinceLastVisit: Boolean(since && r.created_at > since) })
     }
     const counts = Object.fromEntries(ACTIVITY_GROUPS.map(g => [g, items.filter(i => i.group === g).length]))
-    return { items, counts, newSinceLastVisit: items.filter(i => i.newSinceLastVisit).length, groups: ACTIVITY_GROUPS.map(g => ({ key: g, label: ACTIVITY_LABELS[g] })) }
+    const help = g => Object.fromEntries(Object.entries(ACTIVITY_HELP[g]).map(([k, v]) => [k, fillBrand(v)]))
+    return { items, counts, total: items.length, newSinceLastVisit: items.filter(i => i.newSinceLastVisit).length,
+      groups: ACTIVITY_GROUPS.map(g => ({ key: g, label: ACTIVITY_LABELS[g], help: help(g) })) }
   }
 
   function overview() {
