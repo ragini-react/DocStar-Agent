@@ -1,3 +1,4 @@
+import { SITE_HOST } from '../agent/brand.js'
 // The only browser actions the AI may propose, and the server-side check every proposal passes
 // before Playwright runs it. The AI sees elements by ref (e1, e2, …) from our own page snapshot,
 // never raw selectors, and fills secrets and company facts through {{placeholders}} we resolve.
@@ -35,7 +36,7 @@ export const browserActionSchema = {
 const PLACEHOLDER = /\{\{([A-Za-z0-9_.]+)\}\}/g
 
 // Field label → the profile fact it needs, and values that must not be typed there instead.
-const SITE = /\{\{(company\.website|listing\.url)\}\}|https?:\/\/(www\.)?docstar\.io\/?$/
+const SITE = new RegExp(String.raw`\{\{(company\.website|listing\.url)\}\}|https?:\/\/(www\.)?` + SITE_HOST.replace(/\./g, "\\.") + String.raw`\/?$`)
 const FIELD_FACTS = [
   [/"[^"]*(documentation|docs url|docs link|api docs|api reference|developer docs)[^"]*"/i, 'docs_url', SITE],
   [/"[^"]*(openapi|swagger|api spec|spec url)[^"]*"/i, 'openapi_url', SITE],

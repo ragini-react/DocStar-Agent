@@ -20,6 +20,8 @@ import { execute, fill, isPaymentPage, renderSnapshot, snapshot } from './browse
 import { isClosedError, isNavigationError, safeEvaluate, settle } from '../browser/pageGuard.js'
 import { GOOGLE_AUTH_HOSTS, followGoogleOAuth, isAuthUrl, withPopup } from '../browser/oauth.js'
 import { auditForm, restoreResetValues, submitWithEvidence } from '../browser/formAudit.js'
+import { BRAND, BRAND_SLUG, MENTION, SITE_URL, SUPPORT_EMAIL, brand } from './brand.js'
+import { cleanListingUrl, notLiveYet, publicListingUrl } from './listingUrl.js'
 
 const MAX_STEPS = 45
 const MAX_INVALID = 4
@@ -30,16 +32,17 @@ const SUBMIT_LABEL = /^(submit|publish|launch|send|list|add)\b.*|submit (tool|pr
 const SIGNIN_PATH = /(sign.?up|sign.?in|log.?in|register|auth|oauth|verify|join)/i
 const sessions = new Map() // taskId -> { page, expected, submits, lastVerdict }
 
-export const PROMPT = `You operate a web browser to list DocStar (https://docstar.io/) on ONE platform: create or sign in to DocStar's account if needed, then submit the approved listing. Reply with exactly one next action.
+export const PROMPT = `You operate a web browser to list ${BRAND} (${SITE_URL}) on ONE platform: create or sign in to ${BRAND}'s account if needed, then submit the approved listing. Reply with exactly one next action.
 
 Rules:
 - Use only element refs from the current snapshot. One action per reply.
-- Type ONLY placeholders or the approved listing texts: {{account.email}}, {{account.password}}, {{account.name}}, {{account.username}}, {{company.*}} (the approved profile facts listed in the message), {{listing.title}}, {{listing.tagline}}, {{listing.short_description}}, {{listing.long_description}}, {{listing.tags}}, {{listing.url}}. Never invent other information and never put one fact in a field meant for another (e.g. the homepage into a documentation-URL field). If a required field needs a fact that is not in the profile, use missing_field with the field's name as value.
+- Type ONLY placeholders or the approved listing texts: {{account.email}}, {{account.password}}, {{account.name}}, {{account.username}}, {{company.*}} (the approved profile facts listed in the message), {{listing.title}}, {{listing.tagline}}, {{listing.short_description}}, {{listing.long_description}}, {{listing.tags}}, {{listing.url}}. Every website / homepage / product URL field gets exactly {{listing.url}} (${SITE_URL}): never www., http://, a subdomain or a tracking parameter. Never invent other information and never put one fact in a field meant for another (e.g. the homepage into a documentation-URL field). If a required field needs a fact that is not in the profile, use missing_field with the field's name as value.
 - Prefer "Sign in/Continue with Google" when offered. Google's account chooser and consent screens are handled for you after the click.
+- The brand name is exactly "${BRAND}". The Google account may show as "${BRAND} Support": that is NOT the brand. If a name, maker, company, brand or display-name field shows "${BRAND} Support" (any casing), clear it and type {{company.name}} instead. Never type "Support" as part of ${BRAND}'s name.
 - After an email sign-up, if the site says to confirm the email, use verify_email.
 - CAPTCHA, "I'm not a robot", OTP / SMS / authenticator codes, identity checks, or anything you are unsure is allowed: request_human.
 - If submitting requires payment, a paid plan, a card, or a paid "fast track" with no free option: skip with value "paid". Never enter payment details. Untick paid upsells.
-- If DocStar is already listed on this platform: skip with value "already_listed" and give the listing URL in reason.
+- If ${BRAND} is already listed on this platform: skip with value "already_listed" and give the listing URL in reason.
 - If the platform's terms forbid automated submission: skip with value "policy".
 - Upload a logo/icon only with upload and value {{company.logo}}.
 - Press the form's final submit / publish button with the submit action (not click). Every field is checked before it is pressed, and the result is reported back to you.
@@ -50,7 +53,7 @@ Rules:
 export function createSubmitTask({ db, vault, ai, chrome, gmail, company, listings, activity, config, status, finder = null, playbooks = null, verifier = null, opts = {} }) {
   const dataDir = path.dirname(config.dbPath)
   const logoFile = path.join(dataDir, 'assets', 'docstar-logo.png')
-  const googleEmail = opts.googleEmail || 'support@docstar.io'
+  const googleEmail = opts.googleEmail || `${SUPPORT_EMAIL}`
   const authHosts = opts.authHosts || GOOGLE_AUTH_HOSTS
   const maxSteps = opts.maxSteps || MAX_STEPS
 
@@ -147,7 +150,7 @@ export function createSubmitTask({ db, vault, ai, chrome, gmail, company, listin
     const listing = listings.get(p.id)
     const requireApproval = getSetting(db, 'require_approval', '1') === '1'
     // Conditions only a person can change are waited for (an event wakes the task), never retried on a timer.
-    if (!facts) return ctx.waitFor('company_approved', 'the DocStar profile is not approved yet')
+    if (!facts) return ctx.waitFor('company_approved', `the ${BRAND} profile is not approved yet`)
     if (!listing || (requireApproval && !['approved', 'submitted', 'published'].includes(listing.status))) return ctx.waitFor(`approval:${p.id}`, 'the listing is not approved yet')
     if (p.automation_policy === 'prohibited') throw new PermanentError(`${p.name}'s terms forbid automated submission`, { platformStatus: 'rejected', statusReason: 'policy' })
 
@@ -171,11 +174,13 @@ export function createSubmitTask({ db, vault, ai, chrome, gmail, company, listin
     const cp = JSON.parse(task.checkpoint || '{}')
     const threadId = `task-${p.domain}-${task.id}-${task.attempts}`
     const values = {
-      'account.email': googleEmail, 'account.name': facts.contact_name || 'DocStar Team', 'account.username': 'docstar',
+      'account.email': googleEmail, 'account.name': brand(facts.contact_name) || BRAND, 'account.username': BRAND_SLUG,
       'listing.title': listing.title, 'listing.tagline': listing.tagline, 'listing.short_description': listing.short_description,
-      'listing.long_description': listing.long_description, 'listing.tags': (listing.tags || []).join(', '), 'listing.url': 'https://docstar.io/',
-      ...Object.fromEntries(Object.entries(facts).map(([k, v]) => [`company.${k}`, v]))
+      'listing.long_description': listing.long_description, 'listing.tags': (listing.tags || []).join(', '), 'listing.url': SITE_URL,
+      ...Object.fromEntries(Object.entries(facts).map(([k, v]) => [`company.${k}`, v])),
+      'company.website': SITE_URL // the homepage is always the same address, whatever the profile says
     }
+    for (const k of Object.keys(values)) values[k] = brand(values[k]) // "DocStar", never "DocStar Support"
     const approvedTexts = new Set(Object.values(values).filter(v => typeof v === 'string' && v.length > 2))
     const allowedHosts = [p.domain, ...AUTH_HOSTS, ...authHosts]
     const logo = await logoPath(facts.logo_square_url || facts.logo_url)
@@ -217,7 +222,7 @@ export function createSubmitTask({ db, vault, ai, chrome, gmail, company, listin
           completeSignup(p, ctx, `${acc.login_method} sign-up finished`)
         }
 
-        const accountState = acc ? `DocStar account on this site: ${acc.login_method}, ${acc.signup_completed_at ? 'signed up' : acc.status}` : 'No DocStar account on this site yet.'
+        const accountState = acc ? `${BRAND} account on this site: ${acc.login_method}, ${acc.signup_completed_at ? 'signed up' : acc.status}` : `No ${BRAND} account on this site yet.`
         const proposal = await ai.json({
           threadId, schema: browserActionSchema, prompt: PROMPT,
           message: `PLATFORM: ${p.name} (${p.domain})\n${accountState}\nListing approved: ${listing.status === 'approved' || !requireApproval}\nLogo available: ${Boolean(logo)}\nApproved profile facts available: ${Object.keys(facts).map(k => `{{company.${k}}}`).join(', ')}\nWHAT WORKED BEFORE:\n${playbookBrief}\nLast result: ${feedback}\n\n${renderSnapshot(snap)}`
@@ -275,8 +280,8 @@ export function createSubmitTask({ db, vault, ai, chrome, gmail, company, listin
         if (isSubmit) {
           const key = blockKey(page.url())
           if ((s.submits[key] || 0) >= MAX_SUBMITS_PER_FORM) {
-            return handToYou(`Submitted this form ${s.submits[key]} times without a confirmation; stopped so DocStar is not listed twice`, `submit:${key}`,
-              `Check in the agent's Chrome (or the account's dashboard) whether DocStar's listing exists. If it does, use "Mark as done manually"; if not, fix the form there and press Resume.`, page.url(), page)
+            return handToYou(`Submitted this form ${s.submits[key]} times without a confirmation; stopped so ${BRAND} is not listed twice`, `submit:${key}`,
+              `Check in the agent's Chrome (or the account's dashboard) whether ${BRAND}'s listing exists. If it does, use "Mark as done manually"; if not, fix the form there and press Resume.`, page.url(), page)
           }
           if (finder) {
             const dup = await finder.find(p, { useSearch: false }).catch(() => null)
@@ -372,7 +377,7 @@ export function createSubmitTask({ db, vault, ai, chrome, gmail, company, listin
 
   async function looksListed(page) {
     const text = await safeEvaluate(page, () => document.body?.innerText || '').catch(() => '')
-    return /docstar/i.test(text) && /(thank you|submitted|under review|pending|is live|your (tool|product|listing))/i.test(text)
+    return MENTION.test(text) && /(thank you|submitted|under review|pending|is live|your (tool|product|listing))/i.test(text)
   }
 
   function finishSkip(p, task, ctx, reason, note) {
@@ -382,19 +387,26 @@ export function createSubmitTask({ db, vault, ai, chrome, gmail, company, listin
     closeTaskPages(task.id)
   }
 
-  function finishAlreadyListed(p, task, ctx, listingUrl, note) {
+  function finishAlreadyListed(p, task, ctx, rawUrl, note) {
+    // Only a public listing page counts as published. A dashboard / "waiting for approval" entry means the listing
+    // exists but is not live: it is recorded as submitted, and the listing finder keeps looking for the public page.
+    let listingUrl = publicListingUrl(rawUrl)
+    if (listingUrl && notLiveYet(note)) listingUrl = null
     db.transaction(() => {
       const sub = db.prepare(`UPDATE submissions SET listing_url = COALESCE(?, listing_url), submitted_at = COALESCE(submitted_at, ?), published_at = COALESCE(published_at, ?), updated_at = ? WHERE platform_id = ? RETURNING id`)
-        .get(listingUrl, now(), now(), now(), p.id)
+        .get(listingUrl, now(), listingUrl ? now() : null, now(), p.id)
       if (sub && listingUrl) db.prepare(`INSERT INTO backlinks (submission_id, page_url, status, next_check_at) VALUES (?, ?, 'unverified', ?) ON CONFLICT(submission_id) DO UPDATE SET page_url = excluded.page_url, next_check_at = excluded.next_check_at`).run(sub.id, listingUrl, now())
       status.transition(p.id, listingUrl ? 'published' : 'submitted', { taskId: task.id, manual: true, reason: `already listed: ${note}` })
+      if (!listingUrl) db.prepare(`UPDATE submissions SET status = 'submitted', published_at = NULL WHERE platform_id = ?`).run(p.id)
+      if (!listingUrl) db.prepare(`UPDATE platforms SET next_listing_search_at = ?, listing_searches = 0 WHERE id = ?`).run(new Date(Date.now() + 3600_000).toISOString(), p.id)
     })()
-    activity.success('listing_found', `${p.name}: DocStar is already listed${listingUrl ? ` (${listingUrl})` : ''}; not submitted again`, { platformId: p.id, taskId: task.id })
+    activity.success('listing_found', `${p.name}: ${BRAND} is already listed${listingUrl ? ` (${listingUrl})` : ''}; not submitted again`, { platformId: p.id, taskId: task.id })
     playbooks?.update(p.id, { lastOutcome: 'already listed', lastRunAt: now() })
     closeTaskPages(task.id)
   }
 
-  function finishComplete(p, task, ctx, pageUrl, listingUrl, note) {
+  function finishComplete(p, task, ctx, pageUrl, rawListingUrl, note) {
+    const listingUrl = publicListingUrl(rawListingUrl) // a dashboard or "submitted" page is not the listing
     db.transaction(() => {
       db.prepare(`UPDATE submissions SET status = 'submitted', submission_url = ?, listing_url = COALESCE(?, listing_url), submitted_at = ?, account_id = ?, updated_at = ? WHERE platform_id = ?`)
         .run(pageUrl, listingUrl, now(), account(p.id)?.id ?? null, now(), p.id)
@@ -415,7 +427,7 @@ export function createSubmitTask({ db, vault, ai, chrome, gmail, company, listin
 }
 
 const onPlatform = (url, domain) => { try { const h = new URL(url).hostname.replace(/^www\./, ''); return h === domain || h.endsWith(`.${domain}`) } catch { return false } }
-const extractUrl = (text, domain) => (String(text).match(/https?:\/\/[^\s)>\]"']+/g) || []).find(u => onPlatform(u, domain)) || null
+const extractUrl = (text, domain) => (String(text).match(/https?:\/\/[^\s)>\]"']+/g) || []).map(cleanListingUrl).find(u => u && onPlatform(u, domain)) || null
 
 /** Where a task stopped: the page without its query string, so the same form or check matches across visits. */
 export function blockKey(url) {

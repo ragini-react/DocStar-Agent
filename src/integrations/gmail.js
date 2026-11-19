@@ -5,6 +5,7 @@ import { now } from '../db/index.js'
 import { maskError } from '../security/mask.js'
 import { serviceIdFor } from './viasocket.js'
 import { pickVerificationLink, senderDomain } from './verificationLinks.js'
+import { BRAND } from '../agent/brand.js'
 
 const KEY = 'gmail'
 const STATUS_TTL_MS = 60_000
@@ -74,7 +75,7 @@ export function createGmail({ db, vault, activity, viasocket, config }) {
     disconnect() {
       db.prepare('DELETE FROM integration_settings WHERE key = ?').run(KEY)
       statusCache = null
-      activity.warn('gmail_disconnected', 'Gmail connection removed from DocStar (the connection itself stays in viaSocket)')
+      activity.warn('gmail_disconnected', `Gmail connection removed from ${BRAND} (the connection itself stays in viaSocket)`)
     },
 
     /** Read-only check: one search for Google's own account mail. Returns counts and a date, never content. */

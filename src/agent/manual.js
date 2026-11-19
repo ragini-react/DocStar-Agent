@@ -2,6 +2,7 @@
 // listing URL, backlink page and notes are saved, open tasks for the platform end, the platform moves to the state the
 // facts support (published with a listing URL, submitted without one), and a backlink check runs at once.
 import { now } from '../db/index.js'
+import { cleanListingUrl } from './listingUrl.js'
 
 const httpUrl = (v, field) => {
   if (!v) return null
@@ -19,8 +20,8 @@ export function createManual({ db, activity, status, orchestrator, backlinks }) 
   function complete(platformId, data = {}) {
     const p = db.prepare('SELECT id, name, status FROM platforms WHERE id = ?').get(platformId)
     if (!p) throw Object.assign(new Error('No such platform'), { status: 404 })
-    const listingUrl = httpUrl(data.listingUrl, 'Listing URL')
-    const backlinkUrl = httpUrl(data.backlinkUrl, 'Backlink URL')
+    const listingUrl = cleanListingUrl(httpUrl(data.listingUrl, 'Listing URL')) || null
+    const backlinkUrl = cleanListingUrl(httpUrl(data.backlinkUrl, 'Backlink URL')) || null
     const email = data.accountEmail ? String(data.accountEmail).trim().slice(0, 200) : null
     if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw Object.assign(new Error('Account email is not valid'), { status: 400 })
     const notes = data.notes ? String(data.notes).slice(0, 2000) : null

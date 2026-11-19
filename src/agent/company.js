@@ -3,6 +3,7 @@
 import { now } from '../db/index.js'
 import { fetchPage } from './fetchPage.js'
 import { arr, obj, str } from './schema.js'
+import { BRAND, SITE_HOST, SITE_URL, SUPPORT_EMAIL, brandAll, isSiteUrl } from './brand.js'
 
 const PAGES = ['/', '/api-docs', '/mcp', '/cli', '/agents', '/pricing', '/white-label', '/for/integrators']
 
@@ -69,7 +70,8 @@ export function createCompany({ db, ai, activity }) {
       const rows = all()
       const required = ['name', 'website', 'short_description', 'long_description', 'category']
       if (!required.every(k => rows[k]?.approved && rows[k].value)) return null
-      return Object.fromEntries(Object.entries(rows).filter(([, r]) => r.approved).map(([k, r]) => [k, r.value]))
+      const facts = brandAll(Object.fromEntries(Object.entries(rows).filter(([, r]) => r.approved).map(([k, r]) => [k, r.value])))
+      return { ...facts, website: SITE_URL }
     },
 
     /** Read docstar.io and draft every field. Overwrites only fields that are not approved. */
@@ -78,13 +80,13 @@ export function createCompany({ db, ai, activity }) {
       let home
       for (const path of PAGES) {
         try {
-          const p = await fetchPage(`https://docstar.io${path}`)
+          const p = await fetchPage(`https://${SITE_HOST}${path}`)
           if (p.status !== 200) continue
           if (path === '/') home = p
-          pages.push(`### https://docstar.io${path}\nTITLE: ${p.title}\nDESCRIPTION: ${p.description}\n${p.text.slice(0, 6000)}`)
+          pages.push(`### https://${SITE_HOST}${path}\nTITLE: ${p.title}\nDESCRIPTION: ${p.description}\n${p.text.slice(0, 6000)}`)
         } catch {}
       }
-      if (!home) throw new Error('docstar.io could not be read')
+      if (!home) throw new Error(`${SITE_HOST} could not be read`)
       const draft = await ai.json({
         threadId: `company-${Date.now().toString(36)}`,
         schema,
@@ -95,7 +97,7 @@ export function createCompany({ db, ai, activity }) {
       const social = [...new Set(home.links.map(l => l.href).filter(h => /linkedin\.com|twitter\.com|x\.com|youtube\.com|github\.com|facebook\.com|instagram\.com/.test(h)))]
       const values = {
         name: draft.name,
-        website: 'https://docstar.io/',
+        website: SITE_URL,
         tagline: draft.tagline,
         short_description: draft.short_description,
         long_description: draft.long_description,
@@ -107,25 +109,32 @@ export function createCompany({ db, ai, activity }) {
         logo_url: home.ogImage || '',
         favicon_url: (home.html.match(/<link[^>]+rel=["'][^"']*icon[^"']*["'][^>]*href=["']([^"']+)["']/i)?.[1] && new URL(home.html.match(/<link[^>]+rel=["'][^"']*icon[^"']*["'][^>]*href=["']([^"']+)["']/i)[1], 'https://docstar.io/').toString()) || '',
         github_url: social.find(h => /github\.com/.test(h)) || '',
-        contact_email: emails.find(e => e.endsWith('@docstar.io')) || 'support@docstar.io',
+        contact_email: emails.find(e => e.endsWith(`@${SITE_HOST}`)) || `${SUPPORT_EMAIL}`,
         social_links: social.join('\n')
       }
       const approvedNow = all()
       db.transaction(() => {
         for (const [k, v] of Object.entries(values)) if (!approvedNow[k]?.approved) upsert.run(k, String(v ?? ''), now())
       })()
-      activity.info('company_drafted', `DocStar profile drafted from ${pages.length} docstar.io pages; waiting for your approval`, { meta: { unsupported: draft.unsupported } })
+      activity.info('company_drafted', `${BRAND} profile drafted from ${pages.length} ${SITE_HOST} pages; waiting for your approval`, { meta: { unsupported: draft.unsupported } })
       return { values, unsupported: draft.unsupported, pages: pages.length }
     },
 
     save(field, value) {
       if (!COMPANY_FIELDS.some(([k]) => k === field)) throw new Error(`Unknown field ${field}`)
-      upsert.run(field, String(value ?? '').trim(), now())
+      let v = String(value ?? '').trim()
+      if (field === 'website') {
+        // Listed everywhere as the same address: docstar.io, in one canonical form.
+        const url = /^https?:\/\//i.test(v) ? v : `https://${v}`
+        if (!isSiteUrl(url)) throw Object.assign(new Error(`Website must be ${SITE_URL}`), { status: 400 })
+        v = SITE_URL
+      }
+      upsert.run(field, v, now())
     },
 
     approveAll() {
       const r = db.prepare(`UPDATE company_information SET approved = 1, approved_at = ? WHERE value <> ''`).run(now())
-      activity.success('company_approved', `DocStar profile approved (${r.changes} fields)`)
+      activity.success('company_approved', `${BRAND} profile approved (${r.changes} fields)`)
       return r.changes
     }
   }

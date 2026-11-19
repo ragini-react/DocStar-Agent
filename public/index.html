@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>DocStar Backlink Agent</title>
+  <title>{{BRAND}} Backlink Agent</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/styles.css">
   <script type="module" src="/app.js"></script>
@@ -11,8 +11,8 @@
 <body>
   <div id="login" class="login" hidden>
     <form id="login-form" class="login-card">
-      <div class="brand"><span class="logo">D</span> DocStar Backlink Agent</div>
-      <p class="muted" id="login-hint">Sign in with the DocStar admin password.</p>
+      <div class="brand"><span class="logo">{{LOGO_LETTER}}</span> {{BRAND}} Backlink Agent</div>
+      <p class="muted" id="login-hint">Sign in with the {{BRAND}} admin password.</p>
       <label>Admin password <input id="login-password" type="password" autocomplete="current-password" required></label>
       <p id="login-error" class="error" role="alert"></p>
       <button class="btn primary" type="submit">Sign in</button>
@@ -21,14 +21,15 @@
 
   <div id="app" class="shell" hidden>
     <aside class="sidebar">
-      <div class="brand"><span class="logo">D</span> DocStar <span class="muted">Agent</span></div>
+      <div class="brand"><span class="logo">{{LOGO_LETTER}}</span> {{BRAND}} <span class="muted">Agent</span></div>
       <nav id="nav">
         <a href="#overview" data-view="overview">Overview</a>
         <a href="#platforms" data-view="platforms">Platforms</a>
         <a href="#queue" data-view="queue">Needs you <span id="badge-queue" class="badge" hidden></span></a>
+        <a href="#activity-list" data-view="activity-list">Product activity <span id="badge-activity-list" class="badge ok" hidden></span></a>
         <a href="#added" data-view="added">Successfully added <span id="badge-added" class="badge ok" hidden></span></a>
         <a href="#failed" data-view="failed">Failed <span id="badge-failed" class="badge" hidden></span></a>
-        <a href="#company" data-view="company">DocStar profile <span id="badge-company" class="badge" hidden>!</span></a>
+        <a href="#company" data-view="company">{{BRAND}} profile <span id="badge-company" class="badge" hidden>!</span></a>
         <a href="#activity" data-view="activity">Activity</a>
         <a href="#health" data-view="health">Health</a>
         <a href="#integrations" data-view="integrations">Integrations</a>
@@ -67,6 +68,11 @@
 
       <section id="view-overview" class="view">
         <div id="kpis" class="kpis"></div>
+        <div id="activity-summary" class="card link activity-summary" data-href="#activity-list" role="link" tabindex="0">
+          <div class="row" style="justify-content:space-between"><h2 style="margin:0">Product Activity List</h2><span class="muted small">Open the list →</span></div>
+          <p class="muted small">Every URL the agent found, with where it stands: new, pending, product added, published, backlink completed. Completed URLs are never crawled or processed again.</p>
+          <div id="activity-summary-counts" class="activity-chips"></div>
+        </div>
         <div class="grid-2">
           <div class="card"><h2>Platforms by status</h2><div id="by-status" class="bars"></div></div>
           <div class="card"><h2>Platforms by category</h2><div id="by-category" class="bars"></div></div>
@@ -113,11 +119,21 @@
         <div class="card" id="browser-queue-card"><h2>Approved, not yet submitted</h2><p class="muted">Every approved listing whose sign-up or submission has not finished, with the step it is at.</p><div id="browser-queue"></div></div>
       </section>
 
+      <section id="view-activity-list" class="view" hidden>
+        <div class="toolbar">
+          <div id="al-filters" class="activity-chips" role="tablist"></div>
+          <span class="spacer"></span>
+          <input id="al-search" type="search" placeholder="Search name or URL" aria-label="Search URLs">
+        </div>
+        <p id="al-note" class="muted small"></p>
+        <div class="card table-wrap"><table><thead><tr><th>Website</th><th>Activity</th><th>Status</th><th>Listing / backlink</th><th>Discovered</th><th>Last change</th></tr></thead><tbody id="al-rows"></tbody></table></div>
+      </section>
+
       <section id="view-added" class="view" hidden>
         <div class="toolbar"><p class="muted small" style="margin:0">Everything the agent (or a person) finished, verified independently. Live links are re-checked on a schedule.</p><span class="spacer"></span><a class="btn" href="/api/export/added.csv">Export CSV</a></div>
         <div class="card"><h2>Live with backlink <span id="added-live-n" class="pill ok"></span></h2><div class="table-wrap"><table class="added"><thead><tr><th>Platform</th><th>Listing</th><th>Backlink</th><th>Link</th><th>Anchor text</th><th>First verified</th><th>Last re-verified</th><th>Account</th></tr></thead><tbody id="added-live"></tbody></table></div></div>
         <div class="card"><h2>Published, backlink not found yet <span id="added-pub-n" class="pill warn"></span></h2><div class="table-wrap"><table class="added"><thead><tr><th>Platform</th><th>Listing</th><th>What was found</th><th>Last checked</th><th>Account</th></tr></thead><tbody id="added-pub"></tbody></table></div></div>
-        <div class="card"><h2>Submitted, awaiting platform review <span id="added-wait-n" class="pill info"></span></h2><div class="table-wrap"><table class="added"><thead><tr><th>Platform</th><th>Submitted</th><th>Waiting</th><th>Account</th></tr></thead><tbody id="added-wait"></tbody></table></div></div>
+        <p class="muted small">Only listings verified on a public page appear here. Submissions still waiting for the platform are under <a href="#activity-list">Product activity</a> → Submitted, not listed yet.</p>
       </section>
 
       <section id="view-failed" class="view" hidden>
@@ -136,14 +152,14 @@
       <section id="view-company" class="view" hidden>
         <div class="card">
           <div class="row" style="justify-content:space-between;align-items:center">
-            <div><h2 style="margin:0">DocStar profile</h2><p class="muted small" style="margin:4px 0 0">The only facts the agent may use in listings. Drafted from docstar.io; edit anything, then approve.</p></div>
+            <div><h2 style="margin:0">{{BRAND}} profile</h2><p class="muted small" style="margin:4px 0 0">The only facts the agent may use in listings. Drafted from {{SITE_HOST}}; edit anything, then approve.</p></div>
             <span id="company-pill" class="pill">—</span>
           </div>
           <form id="company-form" class="company-form"></form>
           <div class="row">
             <button id="company-save" class="btn">Save changes</button>
             <button id="company-approve" class="btn primary">Approve profile</button>
-            <button id="company-draft" class="btn ghost">Re-draft from docstar.io</button>
+            <button id="company-draft" class="btn ghost">Re-draft from {{SITE_HOST}}</button>
           </div>
         </div>
       </section>
@@ -163,7 +179,7 @@
         <div class="grid-2">
           <div class="card integration">
             <div class="int-head"><img src="https://stuff.thingsofbrand.com/gmail.com/images/imge_idrA5FDGTH_1763454052978.svg" alt="" width="28" height="28"><h2>Gmail</h2><span id="gmail-pill" class="pill">—</span></div>
-            <p class="muted">Reads verification emails sent to support@docstar.io. Connected through viaSocket; DocStar asks only for the search and read-message permissions and never sends, labels or deletes mail.</p>
+            <p class="muted">Reads verification emails sent to {{SUPPORT_EMAIL}}. Connected through viaSocket; {{BRAND}} asks only for the search and read-message permissions and never sends, labels or deletes mail.</p>
             <dl id="gmail-details" class="details"></dl>
             <div class="row">
               <button id="gmail-connect" class="btn primary">Connect Gmail</button>
@@ -174,7 +190,7 @@
           </div>
           <div class="card integration" id="chrome-card">
             <div class="int-head"><span class="logo chrome">C</span><h2>Chrome</h2><span id="chrome-pill" class="pill">—</span></div>
-            <p class="muted">The agent works in its own Chrome profile on this Mac. Sign in to Google (support@docstar.io) in it once yourself; the agent never sees or types the Google password.</p>
+            <p class="muted">The agent works in its own Chrome profile on this Mac. Sign in to Google ({{SUPPORT_EMAIL}}) in it once yourself; the agent never sees or types the Google password.</p>
             <dl id="chrome-details" class="details"></dl>
             <div class="row">
               <button id="chrome-launch" class="btn primary">Open Chrome</button>
@@ -228,9 +244,9 @@
     <form method="dialog" id="manual-form" class="dialog-form">
       <h2 id="manual-title">Mark as done manually</h2>
       <p class="muted small">Record work done outside the agent. The platform moves to the right status and the backlink is checked at once.</p>
-      <label>Listing URL <input name="listingUrl" type="url" placeholder="https://platform.com/product/docstar"></label>
+      <label>Listing URL <input name="listingUrl" type="url" placeholder="https://platform.com/product/{{BRAND_SLUG}}"></label>
       <label>Backlink page (if different from the listing) <input name="backlinkUrl" type="url" placeholder="optional"></label>
-      <label>Account email <input name="accountEmail" type="email" placeholder="support@docstar.io"></label>
+      <label>Account email <input name="accountEmail" type="email" placeholder="{{SUPPORT_EMAIL}}"></label>
       <label>Signed up with <select name="loginMethod"><option value="email">Email</option><option value="google">Google</option><option value="github">GitHub</option></select></label>
       <label>Notes <textarea name="notes" rows="3"></textarea></label>
       <div class="row"><button class="btn primary" value="save">Save</button><button class="btn ghost" value="cancel" formnovalidate>Cancel</button></div>

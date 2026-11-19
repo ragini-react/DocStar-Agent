@@ -8,6 +8,7 @@ import { now } from '../db/index.js'
 import { maskText } from '../security/mask.js'
 import { settle } from '../browser/pageGuard.js'
 import { classifyEmail, pickVerificationLink } from './verificationLinks.js'
+import { SUPPORT_EMAIL } from '../agent/brand.js'
 
 const POLL_MS = 25_000
 const DEFAULT_WINDOW_MIN = 15
@@ -110,7 +111,7 @@ export function createEmailVerifier({ db, gmail, activity, vault, status, playbo
     return {
       ok: false,
       reason: `No verification email from ${p.domain} arrived within ${windowMin} minutes (${polls} searches of inbox and spam${resent ? ', after pressing resend once' : ''})`,
-      todo: `Search Gmail for support@docstar.io for "from:${p.domain}" (inbox and spam). If the email is there, open its link in the agent's Chrome, then press Resume. If it is not, press Resume and the agent asks for a new one.`
+      todo: `Search Gmail for ${SUPPORT_EMAIL} for "from:${p.domain}" (inbox and spam). If the email is there, open its link in the agent's Chrome, then press Resume. If it is not, press Resume and the agent asks for a new one.`
     }
   }
 

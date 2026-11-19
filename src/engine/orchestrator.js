@@ -13,8 +13,10 @@ import { randomUUID } from 'node:crypto'
 import { hostname } from 'node:os'
 import { getSetting, now, numSetting, setSetting } from '../db/index.js'
 import { maskError } from '../security/mask.js'
-import { IN_PROGRESS, PAUSED, canTransition, label } from './stateMachine.js'
+import { IN_PROGRESS, PAUSED, PROCESSED, canTransition, label } from './stateMachine.js'
 import { parseNeedsYou } from './status.js'
+
+const REPROCESS = new Set(['qualify', 'prepare', 'submit'])
 
 const LEASE_MS = 5 * 60_000
 const HEARTBEAT_MS = 30_000
@@ -435,6 +437,15 @@ export function createOrchestrator({ db, activity, chrome, status, browser = tru
 
     /** Queue a task unless an unfinished or finished one of the same type exists for that platform (idempotent). */
     enqueue(platformId, type, { runAfter = null, maxAttempts = null, checkpoint = null } = {}) {
+      // A URL whose product was already added, published or backlinked is processed: never qualified, drafted or
+      // submitted again, whatever asks for it (a new crawl, a retry, the sweeper).
+      if (platformId != null && REPROCESS.has(type)) {
+        const p = db.prepare('SELECT name, status FROM platforms WHERE id = ?').get(platformId)
+        if (p && PROCESSED.has(p.status)) {
+          activity.info('already_processed', `${p.name} is already ${label(p.status).toLowerCase()}; ${type} skipped`, { platformId })
+          return { created: false, skipped: 'already_processed', task: null }
+        }
+      }
       const existing = db.prepare(`SELECT id, state FROM automation_tasks WHERE platform_id IS ? AND type = ?
         AND state IN (${[...ACTIVE, 'done'].map(() => '?').join(',')})`).get(platformId, type, ...ACTIVE, 'done')
       if (existing) return { created: false, task: existing }

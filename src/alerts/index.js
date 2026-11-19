@@ -7,11 +7,12 @@
 // Each alert has a key: the same key alerts once per `everyMs` (default 6 h), not every minute.
 import { now } from '../db/index.js'
 import { maskText } from '../security/mask.js'
+import { SUPPORT_EMAIL } from '../agent/brand.js'
 
 export function createAlerts({ db, activity, env = process.env, fetchImpl = fetch }) {
   const slack = env.ALERT_SLACK_WEBHOOK || null
   const email = env.ALERT_EMAIL_WEBHOOK || null
-  const to = env.ALERT_EMAIL_TO || 'support@docstar.io'
+  const to = env.ALERT_EMAIL_TO || `${SUPPORT_EMAIL}`
   const publicUrl = (env.PUBLIC_URL || env.HOSTED_URL || `http://localhost:${env.PORT || 4000}`).replace(/\/+$/, '')
   const sent = []
 

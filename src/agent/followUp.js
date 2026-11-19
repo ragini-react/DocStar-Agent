@@ -7,6 +7,8 @@
 import { now } from '../db/index.js'
 import { maskText } from '../security/mask.js'
 import { classifyEmail, listingUrlFromEmail } from '../integrations/verificationLinks.js'
+import { publicListingUrl } from './listingUrl.js'
+import { BRAND } from './brand.js'
 
 const SUBMITTED = ['submitted', 'pending_platform_review']
 // Platforms where a person may have finished the work by hand.
@@ -20,7 +22,12 @@ export function createFollowUp({ db, activity, status, orchestrator, finder, bac
   }
 
   /** Record a listing found on the platform: saved, platform published, open tasks ended, backlink checked. */
-  async function recordFound(p, url, how) {
+  async function recordFound(p, rawUrl, how) {
+    const url = publicListingUrl(rawUrl)
+    if (!url) {
+      activity.info('listing_not_public', `${p.name}: ${rawUrl} is not a public listing page; still looking`, { platformId: p.id })
+      return false
+    }
     let backlinkId
     db.transaction(() => {
       orchestrator.cancelPlatformTasks(p.id, 'the listing already exists', 'agent')
@@ -32,7 +39,7 @@ export function createFollowUp({ db, activity, status, orchestrator, finder, bac
       status.transition(p.id, 'published', { manual: true, reason: `listing found (${how}): ${url}` })
       db.prepare(`UPDATE platforms SET next_listing_search_at = NULL WHERE id = ?`).run(p.id)
     })()
-    activity.success('listing_found', `${p.name}: DocStar's listing found (${how}) — ${url}`, { platformId: p.id })
+    activity.success('listing_found', `${p.name}: ${BRAND}'s listing found (${how}) — ${url}`, { platformId: p.id })
     await backlinks.check(db.prepare('SELECT * FROM backlinks WHERE id = ?').get(backlinkId)).catch(e => activity.warn('backlink_check_failed', `${p.name}: ${e.message}`, { platformId: p.id }))
     return true
   }

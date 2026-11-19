@@ -1,3 +1,4 @@
+import { MENTION } from '../agent/brand.js'
 // Pure helpers for platform emails: no I/O, so they are unit-tested offline.
 
 export function senderDomain(from) {
@@ -58,5 +59,5 @@ export function classifyEmail({ subject = '', text = '' } = {}) {
 export function listingUrlFromEmail(body, domain) {
   const html = String(body?.html || '') + '\n' + String(body?.plain || '')
   const urls = [...html.matchAll(/https:\/\/[^\s<>"')\]]+/g)].map(m => m[0].replace(/&amp;/g, '&'))
-  return urls.find(u => { try { const x = new URL(u); return onDomain(x.hostname, domain) && /docstar/i.test(x.pathname) } catch { return false } }) || null
+  return urls.find(u => { try { const x = new URL(u); return onDomain(x.hostname, domain) && MENTION.test(x.pathname) } catch { return false } }) || null
 }

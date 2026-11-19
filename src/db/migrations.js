@@ -1,6 +1,7 @@
 // Schema migrations, applied in order by src/db/index.js. v1 is schema.sql. Each later version is one function run
 // inside a transaction with foreign keys off (SQLite needs a table rebuild to change a CHECK constraint).
 import { STATUSES, REASONS } from '../engine/stateMachine.js'
+import { SITE_HOST } from '../agent/brand.js'
 
 const list = values => values.map(v => `'${v}'`).join(',')
 
@@ -81,7 +82,7 @@ export const MIGRATIONS = {
       listing_title        TEXT,
       listing_description  TEXT,
       anchor_text          TEXT,
-      target_url           TEXT NOT NULL DEFAULT 'https://docstar.io/',
+      target_url           TEXT NOT NULL DEFAULT 'https://${SITE_HOST}/',
       submission_url       TEXT,
       listing_url          TEXT,
       status               TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','approval_required','approved','submitted','pending_approval','published','rejected','failed','cancelled')),

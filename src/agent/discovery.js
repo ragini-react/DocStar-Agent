@@ -3,6 +3,7 @@
 import { fetchPage } from './fetchPage.js'
 import { arr, obj, oneOf, str } from './schema.js'
 import { normalizeUrl } from '../platforms/service.js'
+import { BRAND, SITE_URL } from './brand.js'
 
 const CATEGORIES = ['saas_directory', 'ai_tools', 'dev_tools', 'api_docs', 'docs_software', 'startup', 'product_listing', 'reviews', 'company_directory', 'business_profile']
 
@@ -78,7 +79,7 @@ export function createDiscovery({ db, ai, platforms, activity }) {
       let source = 'web search'
       const found = await ai.text({
         threadId: `discover-${Date.now().toString(36)}`,
-        prompt: `You find legitimate places to list DocStar (https://docstar.io/), an API documentation platform for developers and AI agents.
+        prompt: `You find legitimate places to list ${BRAND} (${SITE_URL}), an API documentation platform for developers and AI agents.
 Use web search results only; do not open the browser or visit pages. Return only sites that appear in your search results, with their real URLs.
 ${exclude}`,
         message: `Search: ${query}. Return up to ${batch} sites as a list: name, homepage URL, submission page URL if shown, one line on why it fits.`
@@ -111,7 +112,7 @@ ${exclude}`,
           answer = await ai.json({
             threadId: `discover-lists-${Date.now().toString(36)}`,
             schema,
-            prompt: `Pick the entries best suited to listing DocStar (https://docstar.io/), an API documentation platform for developers and AI agents. Use only entries from the list, URLs copied exactly. ${exclude} Do not browse or search.`,
+            prompt: `Pick the entries best suited to listing ${BRAND} (${SITE_URL}), an API documentation platform for developers and AI agents. Use only entries from the list, URLs copied exactly. ${exclude} Do not browse or search.`,
             message: `Choose up to ${batch}, best first, preferring "${query}":\n${fresh.slice(0, 250).map(l => `- ${l.name}: ${l.url}`).join('\n')}`
           }).catch(() => ({ items: [] }))
         }
@@ -123,16 +124,17 @@ ${exclude}`,
         answer = await ai.json({
           threadId: `discover-known-${Date.now().toString(36)}`,
           schema,
-          prompt: `From your own knowledge, name real, long-running sites matching the request where DocStar (https://docstar.io/), an API documentation platform, can be listed for free. Give real homepage URLs only. ${exclude} Do not browse or search.`,
+          prompt: `From your own knowledge, name real, long-running sites matching the request where ${BRAND} (${SITE_URL}), an API documentation platform, can be listed for free. Give real homepage URLs only. ${exclude} Do not browse or search.`,
           message: `${query}. Up to ${batch} sites.`
         }).catch(() => ({ items: [] }))
       }
       activity.info('discovery_run', `Discovery (${source}): "${query}" → ${answer.items.length} candidates`)
       const added = []
+      let alreadyKnown = 0 // URLs recorded by an earlier crawl: never crawled or processed again
       for (const c of answer.items.slice(0, batch)) {
         let norm
         try { norm = normalizeUrl(c.homepage) } catch { continue }
-        if (known.includes(norm.domain)) continue
+        if (known.includes(norm.domain)) { alreadyKnown++; continue }
         let page
         try { page = await fetchPage(norm.url, { timeoutMs: 15_000 }) } catch (e) {
           activity.info('discovery_unreachable', `${c.name} (${norm.domain}) did not answer; not added`)
@@ -147,7 +149,7 @@ ${exclude}`,
         const finalUrl = page.url || norm.url
         let finalNorm
         try { finalNorm = normalizeUrl(finalUrl) } catch { finalNorm = norm }
-        if (known.includes(finalNorm.domain)) continue
+        if (known.includes(finalNorm.domain)) { alreadyKnown++; continue }
         const r = platforms.create({ name: c.name, url: finalNorm.url, category: c.category, source: `discovery:${query}`.slice(0, 200), notes: c.why })
         if (r.created) {
           if (c.submit_url) platforms.update(r.platform.id, { submission_url: c.submit_url })
@@ -155,7 +157,8 @@ ${exclude}`,
           known.push(norm.domain, finalNorm.domain)
         }
       }
-      return { query, source, candidates: answer.items.length, added }
+      if (alreadyKnown) activity.info('discovery_skipped_known', `Discovery skipped ${alreadyKnown} URL(s) already recorded by an earlier crawl`)
+      return { query, source, candidates: answer.items.length, added, alreadyKnown }
     }
   }
 }

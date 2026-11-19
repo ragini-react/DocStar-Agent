@@ -6,6 +6,7 @@
 // row by row, without touching a field someone is typing in.
 import { connect, loadConnectScript } from '/vendor/viasocket-browser.js'
 import { STATUSES, label } from '/labels.js'
+import { BRAND, SITE_HOST, SITE_URL } from '/brand.js'
 
 const $ = (sel, root = document) => root.querySelector(sel)
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)]
@@ -125,7 +126,7 @@ $('#login-form').addEventListener('submit', run(async e => {
 $('#logout').addEventListener('click', run(async () => { await api('/api/logout', { method: 'POST' }); showLogin() }))
 
 // ---------- navigation ----------
-const TITLES = { overview: 'Overview', platforms: 'Platforms', queue: 'Needs you', added: 'Successfully added', failed: 'Failed', company: 'DocStar profile', activity: 'Activity',
+const TITLES = { overview: 'Overview', 'activity-list': 'Product Activity List', platforms: 'Platforms', queue: 'Needs you', added: 'Successfully added', failed: 'Failed', company: `${BRAND} profile`, activity: 'Activity',
   integrations: 'Integrations', credentials: 'Credentials', settings: 'Settings', health: 'Health' }
 const loaders = {}
 let pendingActivityPlatform = null
@@ -163,7 +164,7 @@ async function flushRefresh() {
   refreshStatus()
   const view = currentView()
   if (view === 'platforms' && !ids.has('all')) return run(refreshRows)([...ids].filter(Number.isFinite))
-  if (['overview', 'platforms', 'queue', 'added', 'failed', 'credentials'].includes(view)) run(loaders[view])({ soft: true })
+  if (['overview', 'activity-list', 'platforms', 'queue', 'added', 'failed', 'credentials'].includes(view)) run(loaders[view])({ soft: true })
   if (view === 'integrations') run(loaders.integrations)()
 }
 const editing = root => { const a = document.activeElement; return a && root?.contains(a) && /INPUT|TEXTAREA|SELECT/.test(a.tagName) ? a : null }
@@ -206,7 +207,61 @@ loaders.overview = async () => {
   bars($('#by-status'), Object.entries(o.byStatus).map(([s, n]) => ({ name: label(s), n, href: `#platforms?status=${s}` })).sort((a, b) => b.n - a.n))
   bars($('#by-category'), o.byCategory.map(r => ({ name: r.name, n: r.n })))
   renderFeed($('#overview-activity'), await api('/api/activity?limit=8'))
+  await loadActivitySummary()
 }
+
+// ---------- product activity list ----------
+// "New since your last visit" is remembered per browser; the groups themselves come from the server.
+const AL_TONE = { new: 'info', pending: 'warn', product_added: 'info', product_published: 'ok', backlink_completed: 'ok', skipped: '' }
+const AL_SEEN_KEY = 'docstar.activityListSeenAt'
+const store = { get(k) { try { return localStorage.getItem(k) } catch { return null } }, set(k, v) { try { localStorage.setItem(k, v) } catch {} } }
+let alFilter = 'open'
+let alData = null
+let alSince = null
+function alChips(el, data, active, withAll) {
+  const chips = [...(withAll ? [{ key: 'open', label: 'New & pending', n: data.counts.new + data.counts.pending }, { key: 'all', label: 'All', n: data.items.length }] : []),
+    ...data.groups.filter(g => withAll || g.key !== 'skipped').map(g => ({ ...g, n: data.counts[g.key] }))]
+  el.innerHTML = chips.map(c => `<button type="button" class="chip ${c.key === active ? 'active' : ''}" data-group="${c.key}">${esc(c.label)} <b>${c.n}</b></button>`).join('')
+}
+function renderActivityList() {
+  if (!alData) return
+  alChips($('#al-filters'), alData, alFilter, true)
+  const q = $('#al-search').value.trim().toLowerCase()
+  const rows = alData.items.filter(i => (alFilter === 'all' || (alFilter === 'open' ? ['new', 'pending'].includes(i.group) : i.group === alFilter))
+    && (!q || `${i.name} ${i.url} ${i.domain}`.toLowerCase().includes(q)))
+  const d = t => (t ? esc(t.slice(0, 10)) : '—')
+  $('#al-note').textContent = alData.newSinceLastVisit ? `${alData.newSinceLastVisit} URL(s) discovered since your last visit are marked "New since last visit".` : 'No new URLs since your last visit.'
+  $('#al-rows').innerHTML = rows.length ? rows.map(i => `<tr>
+      <td><strong class="platform-link" data-drawer="${i.platform_id}">${esc(i.name)}</strong>${i.newSinceLastVisit ? '<span class="pill info new-tag">New since last visit</span>' : ''}<div class="muted small"><a href="${esc(i.url)}" target="_blank" rel="noopener">${esc(i.domain)}</a></div></td>
+      <td><span class="pill ${AL_TONE[i.group] || ''}">${esc(i.groupLabel)}</span></td>
+      <td>${esc(i.statusLabel)}</td>
+      <td>${i.backlink_page ? `<a href="${esc(i.backlink_page)}" target="_blank" rel="noopener">Backlink page</a>` : i.listing_url ? `<a href="${esc(i.listing_url)}" target="_blank" rel="noopener">Listing</a>` : '<span class="muted">—</span>'}</td>
+      <td>${d(i.created_at)}</td><td>${d(i.status_changed_at)}</td></tr>`).join('')
+    : '<tr><td colspan="6" class="muted">Nothing in this group.</td></tr>'
+}
+loaders['activity-list'] = async ({ soft = false } = {}) => {
+  if (!soft) alSince = store.get(AL_SEEN_KEY)
+  alData = await api(`/api/product-activity${alSince ? `?since=${encodeURIComponent(alSince)}` : ''}`)
+  if (!soft) store.set(AL_SEEN_KEY, new Date().toISOString()) // the next visit marks only URLs found after this one
+  renderActivityList()
+}
+$('#al-filters').addEventListener('click', e => { const c = e.target.closest('[data-group]'); if (c) { alFilter = c.dataset.group; renderActivityList() } })
+$('#al-search').addEventListener('input', () => renderActivityList())
+async function loadActivitySummary() {
+  const since = store.get(AL_SEEN_KEY)
+  const data = await api(`/api/product-activity${since ? `?since=${encodeURIComponent(since)}` : ''}`)
+  alChips($('#activity-summary-counts'), data, null, false)
+  const b = $('#badge-activity-list')
+  b.hidden = !data.newSinceLastVisit
+  b.textContent = data.newSinceLastVisit || ''
+}
+$('#activity-summary').addEventListener('click', e => {
+  const c = e.target.closest('[data-group]')
+  if (c) alFilter = c.dataset.group
+  location.hash = '#activity-list'
+})
+$('#activity-summary').addEventListener('keydown', e => { if (e.key === 'Enter') location.hash = '#activity-list' })
+
 $('#kpis').addEventListener('click', e => { const k = e.target.closest('[data-href]'); if (k) location.hash = k.dataset.href })
 $('#kpis').addEventListener('keydown', e => { const k = e.target.closest('[data-href]'); if (k && e.key === 'Enter') location.hash = k.dataset.href })
 
@@ -409,7 +464,7 @@ function approvalCard(a) {
     <div class="scores">${['relevance', 'domain_reputation', 'audience_quality', 'credibility', 'backlink_quality'].map(k => `<span>${esc(label(k))} <b>${s[k] ?? '—'}</b></span>`).join('')}</div>
     <div class="muted small">${esc(a.registration_requirements || '')}${a.submission_requirements ? ` · asks for: ${esc(a.submission_requirements)}` : ''}${a.pricing_notes ? ` · ${esc(a.pricing_notes)}` : ''}</div>
     ${a.payload?.autoApprovalSkipped ? `<div class="muted small">Not auto-approved: ${esc(a.payload.autoApprovalSkipped)}</div>` : ''}
-    <div class="muted small">Submits at: ${a.submission_url ? link(a.submission_url) : 'found by the agent'} · links to https://docstar.io/ with anchor text "${esc(l.anchor_text)}"</div>
+    <div class="muted small">Submits at: ${a.submission_url ? link(a.submission_url) : 'found by the agent'} · links to ${esc(SITE_URL)} with anchor text "${esc(l.anchor_text)}"</div>
     ${field('title', 'Title')}${field('tagline', 'Tagline')}${field('short_description', 'Short description', true)}${field('long_description', 'Description', true)}
     <label>Tags (comma separated)<input name="tags" value="${esc((l.tags || []).join(', '))}"></label>${field('anchor_text', 'Anchor text')}
     <div class="row"><button class="btn primary" data-decision="approve">Approve and submit</button><button class="btn" data-decision="skip">Skip platform</button><button class="btn danger-ghost" data-decision="reject">Reject</button></div>
@@ -449,13 +504,11 @@ loaders.added = async () => {
   const name = r => `<strong class="platform-link" data-drawer="${r.platform_id}">${esc(r.name)}</strong><div class="sub">${esc(r.domain)}</div>${timeline(r.timeline)}`
   $('#added-live-n').textContent = a.live.length
   $('#added-pub-n').textContent = a.published.length
-  $('#added-wait-n').textContent = a.awaiting.length
   $('#added-live').innerHTML = a.live.map(r => `<tr><td>${name(r)}</td><td>${link(r.listing_url, 'listing')}</td><td>${link(r.backlink_page, 'page')}</td>
     <td><span class="pill ${r.is_dofollow ? 'ok' : ''}">${esc(r.is_dofollow ? 'dofollow' : r.rel || 'nofollow')}</span>${r.link_count > 1 ? `<div class="sub">${r.link_count} links</div>` : ''}</td>
     <td>${esc(r.anchor_text || '—')}</td><td>${fmtDate(r.first_seen_at)}</td><td>${fmtTime(r.last_checked_at)}</td><td>${who(r)}</td></tr>`).join('') || '<tr><td colspan="8" class="muted">No live backlinks yet.</td></tr>'
   $('#added-pub').innerHTML = a.published.map(r => `<tr><td>${name(r)}</td><td>${link(r.listing_url, 'listing')}</td><td>${esc(r.found)}</td><td>${fmtTime(r.last_checked_at)}</td><td>${who(r)}</td></tr>`).join('')
     || '<tr><td colspan="5" class="muted">None.</td></tr>'
-  $('#added-wait').innerHTML = a.awaiting.map(r => `<tr><td>${name(r)}</td><td>${fmtDate(r.submitted_at)}</td><td>${r.waitingDays == null ? '—' : `${r.waitingDays} day${r.waitingDays === 1 ? '' : 's'}`}</td><td>${who(r)}</td></tr>`).join('')
     || '<tr><td colspan="4" class="muted">None.</td></tr>'
 }
 
@@ -501,7 +554,7 @@ loaders.company = async () => {
     const v = c.values[k] || {}
     return `<label>${esc(text)} ${v.approved ? '<span class="ok">✓ approved</span>' : ''}${long.has(k)
       ? `<textarea name="${k}" rows="${k === 'long_description' ? 7 : 3}">${esc(v.value)}</textarea>` : `<input name="${k}" value="${esc(v.value)}">`}</label>`
-  }).join('') || '<p class="muted">No profile yet: press "Re-draft from docstar.io".</p>'
+  }).join('') || `<p class="muted">No profile yet: press "Re-draft from ${SITE_HOST}".</p>`
   const pill = $('#company-pill')
   pill.textContent = c.approved ? 'Approved' : Object.keys(c.values).length ? 'Needs your approval' : 'Not drafted'
   pill.className = `pill ${c.approved ? 'ok' : 'warn'}`
@@ -523,8 +576,8 @@ $('#company-approve').addEventListener('click', run(async e => {
   await act(b, '/api/company/approve', { method: 'POST' }, r => { toast(`Profile approved (${r.approved} fields)`, 'ok'); loaders.company(); refreshStatus() })
 }))
 $('#company-draft').addEventListener('click', e => {
-  if (!confirm('Re-draft unapproved fields from docstar.io? Approved fields are kept.')) return
-  toast('Reading docstar.io…')
+  if (!confirm(`Re-draft unapproved fields from ${SITE_HOST}? Approved fields are kept.`)) return
+  toast(`Reading ${SITE_HOST}…`)
   act(e.currentTarget, '/api/company/draft', { method: 'POST' }, () => { toast('Draft ready', 'ok'); loaders.company() })
 })
 
@@ -725,7 +778,7 @@ $('#gmail-test').addEventListener('click', e => {
   })
 })
 $('#gmail-disconnect').addEventListener('click', e => {
-  if (!confirm('Remove the Gmail connection from DocStar? Email verification stops until it is connected again.')) return
+  if (!confirm(`Remove the Gmail connection from ${BRAND}? Email verification stops until it is connected again.`)) return
   act(e.currentTarget, '/api/gmail/disconnect', { method: 'POST' }, () => renderGmail({ connected: false }))
 })
 for (const [id, path, msg, ask] of [['#chrome-launch', '/api/chrome/launch', 'Chrome is ready'], ['#chrome-google', '/api/chrome/google-signin', 'Sign in to Google in the Chrome window'],
@@ -741,7 +794,8 @@ for (const [id, path, msg, ask] of [['#chrome-launch', '/api/chrome/launch', 'Ch
 loaders.credentials = async () => {
   const rows = await api('/api/credentials')
   $('#credentials').innerHTML = rows.length
-    ? rows.map(r => `<div class="list-item" data-account="${r.id}"><div><strong>${esc(r.platform)}</strong> · ${esc(r.email)} · ${esc(label(r.login_method))} sign-up
+    ? rows.map(r => `<div class="list-item" data-account="${r.id}"><div>${r.platform_id ? `<strong class="platform-link" data-drawer="${r.platform_id}" title="Open details">${esc(r.platform)}</strong>` : `<strong>${esc(r.platform)}</strong>`} · ${esc(r.email)} · ${esc(label(r.login_method))} sign-up
+        <div class="small account-links">${link(r.platform_url || (r.domain ? `https://${r.domain}` : ''), r.domain)}${r.profile_url ? ` · ${link(r.profile_url, 'Account profile')}` : ''}${r.listing_url ? ` · ${link(r.listing_url, 'Listing')}` : ''}</div>
         <div class="muted small">${r.signup_completed_at ? `signed up ${fmtDate(r.signup_completed_at)}${r.signup_inferred ? ' (inferred)' : ''}` : `${esc(label(r.status))} · started ${fmtTime(r.created_at)}`}${r.revealed_at ? ` · last revealed ${fmtTime(r.revealed_at)}` : ''}</div><code class="secret" hidden></code></div>
         ${r.has_password && !hosted ? '<button class="btn" data-reveal>Reveal password</button>' : ''}</div>`).join('')
     : '<p class="muted">No platform accounts yet.</p>'

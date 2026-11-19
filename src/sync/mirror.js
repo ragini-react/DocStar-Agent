@@ -16,6 +16,7 @@ import { createHash, randomBytes } from 'node:crypto'
 import { hostname } from 'node:os'
 import { getSetting, now, numSetting, setSetting } from '../db/index.js'
 import { maskError } from '../security/mask.js'
+import { BRAND } from '../agent/brand.js'
 
 // Parents before children; deleted in reverse.
 export const MIRROR_TABLES = ['platform_categories', 'platforms', 'platform_scores', 'company_information', 'accounts', 'credentials', 'submissions',
@@ -162,8 +163,8 @@ export function describeCommand(db, method, path, body = {}) {
     [/\/approvals\/\d+\/reject$/, () => `Reject listing for ${aname}`],
     [/\/approvals\/\d+\/skip$/, () => `Skip ${aname}`],
     [/\/automation\/(\w+)$/, m => `${m[1][0].toUpperCase()}${m[1].slice(1)} the automation`],
-    [/^PUT \/api\/company$/, () => 'Edit the DocStar profile'],
-    [/\/company\/approve$/, () => 'Approve the DocStar profile'],
+    [/^PUT \/api\/company$/, () => `Edit the ${BRAND} profile`],
+    [/\/company\/approve$/, () => `Approve the ${BRAND} profile`],
     [/^PATCH \/api\/settings$/, () => `Change settings (${Object.keys(body).join(', ')})`],
     [/\/chrome\/(\w[\w-]*)$/, m => `Chrome: ${m[1].replace('-', ' ')}`],
     [/\/discovery\/run$/, () => 'Run discovery']
@@ -193,7 +194,7 @@ export function createMirrorReceiver({ db, activity, token, alerts = null }) {
     const last = lastPush()
     const limit = numSetting(db, 'offline_alert_minutes', 10) * 60_000
     if (last && Date.now() - Date.parse(last) > limit) {
-      alerts?.send(`agent-offline:${last}`, 'The DocStar agent is offline', `No update from the agent since ${last}. Changes made on the hosted dashboard wait until it reconnects.`, { level: 'error' })
+      alerts?.send(`agent-offline:${last}`, `The ${BRAND} agent is offline`, `No update from the agent since ${last}. Changes made on the hosted dashboard wait until it reconnects.`, { level: 'error' })
     }
   }
 

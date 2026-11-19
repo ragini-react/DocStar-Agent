@@ -7,8 +7,10 @@
 import { now, numSetting } from '../db/index.js'
 import { fetchPage } from './fetchPage.js'
 import { safeEvaluate, settle } from '../browser/pageGuard.js'
+import { pageShowsListing } from './listingUrl.js'
+import { BRAND, SITE_HOST, SITE_HOSTNAME } from './brand.js'
 
-const TARGET = /(^|\.)docstar\.io$/i
+const TARGET = SITE_HOSTNAME // the DocStar site itself; a link to another subdomain is not the listing's link
 const relsOf = l => new Set(String(l.rel || '').toLowerCase().split(/\s+/).filter(Boolean))
 const kindOf = r => (r.has('sponsored') ? 'sponsored' : r.has('ugc') ? 'ugc' : r.has('nofollow') ? 'nofollow' : 'dofollow')
 
@@ -40,8 +42,9 @@ export function createBacklinkChecker({ db, chrome, activity, status, alerts = n
   async function read(url) {
     try {
       const p = await fetchImpl(url, { timeoutMs: 20_000 })
-      if (p.status < 400 && p.html.length > 500) return { status: p.status, links: p.links, robots: p.robots, xRobotsTag: p.xRobotsTag }
-      if (!chrome) return { status: p.status, links: p.links || [], robots: p.robots, xRobotsTag: p.xRobotsTag, error: p.status >= 400 ? `HTTP ${p.status}` : 'page needs a browser' }
+      const seen = { finalUrl: p.url || url, text: p.text || '', title: p.title || '' }
+      if (p.status < 400 && p.html.length > 500) return { status: p.status, links: p.links, robots: p.robots, xRobotsTag: p.xRobotsTag, ...seen }
+      if (!chrome) return { status: p.status, links: p.links || [], robots: p.robots, xRobotsTag: p.xRobotsTag, ...seen, error: p.status >= 400 ? `HTTP ${p.status}` : 'page needs a browser' }
     } catch (e) { if (!chrome) return { status: 0, links: [], error: e.message } }
     // Blocked or rendered by script: a plain visit in an isolated Chrome page (none on a hosted copy).
     let page
@@ -51,9 +54,11 @@ export function createBacklinkChecker({ db, chrome, activity, status, alerts = n
       await settle(page)
       const data = await safeEvaluate(page, () => ({
         links: [...document.querySelectorAll('a[href]')].map(a => ({ href: a.href, rel: a.getAttribute('rel') || '', text: a.innerText.trim() })),
-        robots: document.querySelector('meta[name="robots" i]')?.content || ''
+        robots: document.querySelector('meta[name="robots" i]')?.content || '',
+        text: (document.body?.innerText || '').slice(0, 20000),
+        title: document.title || ''
       }))
-      return { status: res?.status() ?? 0, ...data, xRobotsTag: (await res?.allHeaders())?.['x-robots-tag'] || '', viaChrome: true }
+      return { status: res?.status() ?? 0, ...data, finalUrl: page.url(), xRobotsTag: (await res?.allHeaders())?.['x-robots-tag'] || '', viaChrome: true }
     } finally {
       await page?.close().catch(() => {})
     }
@@ -68,7 +73,11 @@ export function createBacklinkChecker({ db, chrome, activity, status, alerts = n
     const nofollowLive = numSetting(db, 'nofollow_counts_as_live', 1) === 1
     // live: the link is on a reachable, indexable page. missing: the page answers and has no link (or is noindex).
     // error: the page could not be read (not evidence of absence). pending: no public listing URL yet.
-    const linkStatus = !sub.listing_url && !b.manual_page && !ok ? 'pending' : a.present && ok && a.indexable ? 'live' : ok ? 'missing' : 'error'
+    // A page that answers but is not DocStar's public listing (a login redirect, a form, a "submitted" tracker) is
+    // no evidence the listing is published: pending, so the platform is never counted as listed on its word.
+    // A link seen live before that is gone now is still a lost backlink.
+    const isListing = a.present || Boolean(b.first_seen_at) || pageShowsListing({ url: b.page_url, finalUrl: page.finalUrl, text: page.text, title: page.title, links: page.links || [] })
+    const linkStatus = !sub.listing_url && !b.manual_page && !ok ? 'pending' : a.present && ok && a.indexable ? 'live' : ok && isListing ? 'missing' : ok ? 'pending' : 'error'
     const wasLive = b.status === 'live'
     const wasDofollow = b.is_dofollow === 1
     const relChanged = wasLive && linkStatus === 'live' && wasDofollow && !a.dofollow
@@ -89,7 +98,7 @@ export function createBacklinkChecker({ db, chrome, activity, status, alerts = n
       else if (linkStatus === 'missing') want = b.first_seen_at ? 'backlink_lost' : 'no_backlink'
       if (want && cur !== want) {
         const why = want === 'live_backlink' ? `link found (${a.kind}, anchor "${a.anchor}")`
-          : relChanged ? `the link changed from dofollow to ${a.kind}` : !a.indexable && a.present ? 'the listing page is noindex' : a.present ? `the link is ${a.kind} only` : 'no link to docstar.io on the listing page'
+          : relChanged ? `the link changed from dofollow to ${a.kind}` : !a.indexable && a.present ? 'the listing page is noindex' : a.present ? `the link is ${a.kind} only` : `no link to ${SITE_HOST} on the listing page`
         status.transition(sub.pid, want, { reason: why, manual: true })
       }
     })()
@@ -97,7 +106,7 @@ export function createBacklinkChecker({ db, chrome, activity, status, alerts = n
     else if (relChanged || (wasLive && linkStatus === 'missing')) {
       const what = relChanged ? `changed from dofollow to ${a.kind}` : `is gone (HTTP ${page.status || 'no answer'})`
       activity.error('backlink_lost', `${sub.name}: the backlink ${what}`, { platformId: sub.pid })
-      alerts?.send(`backlink-lost:${sub.pid}:${now().slice(0, 10)}`, `Backlink lost: ${sub.name}`, `The DocStar link on ${b.page_url} ${what}.`, { level: 'error', link: alerts.link(`platforms?status=backlink_lost`) })
+      alerts?.send(`backlink-lost:${sub.pid}:${now().slice(0, 10)}`, `Backlink lost: ${sub.name}`, `The ${BRAND} link on ${b.page_url} ${what}.`, { level: 'error', link: alerts.link(`platforms?status=backlink_lost`) })
     } else activity.info('backlink_checked', `${sub.name}: ${linkStatus} (HTTP ${page.status || 'no answer'}${a.present ? `, ${a.kind}` : ''}${a.present && !a.indexable ? ', noindex' : ''})`, { platformId: sub.pid })
     return { status: linkStatus, ...a, httpStatus: page.status }
   }

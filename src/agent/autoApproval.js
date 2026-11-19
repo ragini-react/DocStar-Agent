@@ -6,6 +6,7 @@
 //   - nothing unusual is required (phone, ID, payment card, company documents, a call …)
 //   - the listing uses only approved profile facts (its links and numbers all appear in the approved profile)
 import { numSetting } from '../db/index.js'
+import { BRAND } from './brand.js'
 
 const UNUSUAL = /phone|sms|text message|id verification|identity|passport|driver|credit card|card details|payment|invoice|tax id|vat|company registration|incorporation|budget|video call|interview|demo call|notari|reference|referral code/i
 
@@ -33,7 +34,7 @@ export function createAutoApproval({ db, company }) {
     const unusual = req.match(UNUSUAL)
     if (unusual) return { ok: false, why: `the platform asks for something unusual ("${unusual[0]}")` }
     const facts = company.approved()
-    if (!facts) return { ok: false, why: 'the DocStar profile is not approved' }
+    if (!facts) return { ok: false, why: `the ${BRAND} profile is not approved` }
     const r = usesOnlyApprovedFacts(listing, facts)
     if (!r.ok) return r
     return { ok: true, why: `score ${score} ≥ ${min}, free, no unusual requirements, only approved facts` }

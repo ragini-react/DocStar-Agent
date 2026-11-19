@@ -5,6 +5,7 @@ import { spawn } from 'node:child_process'
 import { existsSync, mkdirSync } from 'node:fs'
 import { chromium } from 'playwright-core'
 import { maskError } from '../security/mask.js'
+import { BRAND } from '../agent/brand.js'
 
 const sleep = ms => new Promise(r => setTimeout(r, ms))
 
@@ -74,7 +75,7 @@ export function createChrome({ config, activity }) {
         // Our own detach on server stop leaves Chrome open: not worth a warning.
         if (!detaching) activity.warn('chrome_disconnected', 'Chrome closed or disconnected')
       })
-      activity.success('chrome_connected', launched ? 'Chrome started with the DocStar profile' : 'Attached to the running Chrome')
+      activity.success('chrome_connected', launched ? `Chrome started with the ${BRAND} profile` : 'Attached to the running Chrome')
       return browser
     })()
     try {

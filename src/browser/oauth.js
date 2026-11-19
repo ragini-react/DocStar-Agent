@@ -3,6 +3,7 @@
 // the tab is back on the platform. The agent never types a Google password: if Google asks for one (the profile is not
 // signed in), the result says so and the task goes to a person for the one-time sign-in.
 import { settle } from './pageGuard.js'
+import { BRAND } from '../agent/brand.js'
 
 export const GOOGLE_AUTH_HOSTS = ['accounts.google.com']
 const onHost = (url, hosts) => { try { const h = new URL(url).hostname; return hosts.some(x => h === x || h.endsWith(`.${x}`)) } catch { return false } }
@@ -47,13 +48,13 @@ export async function followGoogleOAuth({ authPage, originalPage, email, authHos
     // Account chooser: the DocStar account.
     const account = authPage.locator(`[data-identifier="${email}" i], [data-email="${email}" i]`).first()
     if (await account.count()) {
-      steps.push('chose the DocStar account')
+      steps.push(`chose the ${BRAND} account`)
       await act(authPage, () => account.click({ timeout: 10_000 }))
       continue
     }
     const byText = authPage.getByText(email, { exact: false }).first()
     if (await byText.count() && await byText.isVisible().catch(() => false)) {
-      steps.push('chose the DocStar account (by text)')
+      steps.push(`chose the ${BRAND} account (by text)`)
       await act(authPage, () => byText.click({ timeout: 10_000 }))
       continue
     }

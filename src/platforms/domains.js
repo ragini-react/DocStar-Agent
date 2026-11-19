@@ -1,3 +1,4 @@
+import { BRAND_SLUG } from '../agent/brand.js'
 // Domains: normalized before anything is inserted (lowercase, no www., the final domain after redirects) and compared
 // by registrable domain (eTLD+1), so g2crowd.com → g2.com or www.example.co.uk / app.example.co.uk are one platform.
 // Hosts that serve many unrelated sites (github.com, medium.com …) keep their full host (and path owner) as the key.
@@ -40,7 +41,7 @@ export async function resolveFinalUrl(url, { fetchImpl = fetch, hops = 6, timeou
   let cur = url
   try {
     for (let i = 0; i < hops; i++) {
-      const res = await fetchImpl(cur, { method: 'GET', redirect: 'manual', signal: AbortSignal.timeout(timeoutMs), headers: { 'User-Agent': 'Mozilla/5.0 DocStarAgent' } })
+      const res = await fetchImpl(cur, { method: 'GET', redirect: 'manual', signal: AbortSignal.timeout(timeoutMs), headers: { 'User-Agent': `Mozilla/5.0 ${BRAND_SLUG}Agent` } })
       const loc = res.headers.get('location')
       if (!(res.status >= 300 && res.status < 400 && loc)) break
       cur = new URL(loc, cur).toString()

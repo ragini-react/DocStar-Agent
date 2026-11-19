@@ -134,7 +134,7 @@ test('overview counts equal the lists they open', () => {
   assert.equal(o.needsYou, 1)
   assert.equal(o.failed, t.views.failed().length)
   assert.equal(o.successfullyAdded, t.views.successfullyAdded().total)
-  assert.equal(o.successfullyAdded, 2)
+  assert.equal(o.successfullyAdded, 1) // only the public listing; the one awaiting review is not listed yet
   assert.equal(o.approvedWaiting, t.views.approvedPipeline().length)
   assert.equal(o.approvedWaiting, 2) // approved + registering; never the one awaiting platform review
   assert.equal(o.needsYou, t.platforms.list({ group: 'needs_you' }).total)
@@ -218,7 +218,7 @@ test('successfully added: three groups, each item with its dated timeline', () =
   t.db.prepare(`INSERT INTO backlinks (submission_id, page_url, status, is_dofollow, first_seen_at) VALUES (?, 'https://x.io/docstar', 'live', 1, '2026-11-12')`).run(sub.id)
   platformAt(t, 'pending_platform_review', { name: 'Waiting', submission: 'pending_approval' })
   const a = t.views.added()
-  assert.deepEqual([a.live.length, a.published.length, a.awaiting.length, a.total], [1, 0, 1, 2])
+  assert.deepEqual([a.live.length, a.published.length, a.awaiting.length, a.total], [1, 0, 1, 1])
   const tl = Object.fromEntries(a.live[0].timeline.map(m => [m.key, m.at]))
   for (const k of ['discovered', 'qualified', 'approved', 'submitted', 'live']) assert.ok(tl[k], k)
   assert.equal(tl.live, '2026-11-12')

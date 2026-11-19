@@ -1,4 +1,5 @@
 import { quietAfter, safeEvaluate, settle } from '../browser/pageGuard.js'
+import { BRAND, brand } from './brand.js'
 // What the AI sees of a page and how its validated decisions are carried out in the agent's Chrome.
 // Elements are tagged with data-ds-ref="eN" by our own snapshot script; the AI only ever names those refs.
 
@@ -56,7 +57,7 @@ export function renderSnapshot(s) {
 
 /** Replace {{placeholders}} with real values; unknown ones were already refused by the validator. */
 export function fill(value, values) {
-  return value.replace(/\{\{([A-Za-z0-9_.]+)\}\}/g, (_, k) => values[k] ?? '')
+  return brand(value.replace(/\{\{([A-Za-z0-9_.]+)\}\}/g, (_, k) => values[k] ?? ''))
 }
 
 const PAYMENT_HOSTS = /(^|\.)(stripe\.com|paypal\.com|paddle\.com|lemonsqueezy\.com|gumroad\.com|chargebee\.com|checkout\.com|braintreegateway\.com|razorpay\.com|2checkout\.com|fastspring\.com)$/i
@@ -83,7 +84,7 @@ export async function execute(page, action, { values, logoPath }) {
     case 'upload':
       if (!logoPath) throw new Error('no logo file available')
       await quietAfter(page, () => el().setInputFiles(logoPath, { timeout: 10_000 })) // the upload's own request finishes first
-      return 'uploaded the DocStar logo'
+      return `uploaded the ${BRAND} logo`
     case 'scroll':
       await page.mouse.wheel(0, action.value === 'up' ? -800 : 800)
       await page.waitForLoadState('networkidle', { timeout: 2_000 }).catch(() => {}) // lazy-loaded content

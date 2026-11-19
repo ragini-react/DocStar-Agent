@@ -194,3 +194,12 @@ table.added td { vertical-align: top; }
 tr.pending-row { opacity: .7; } tr.pending-row td { font-style: italic; }
 tr.flash { animation: flash 1.2s ease-out; }
 @keyframes flash { from { background: var(--accent-soft); } to { background: transparent; } }
+
+/* Product activity list */
+.activity-summary { cursor: pointer; }
+.activity-summary:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+.activity-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.activity-chips .chip { display: inline-flex; gap: 6px; align-items: center; padding: 4px 10px; border-radius: 999px; border: 1px solid rgba(127,127,127,.35); background: transparent; color: inherit; font: inherit; font-size: 13px; cursor: pointer; }
+.activity-chips .chip b { font-variant-numeric: tabular-nums; }
+.activity-chips .chip.active { border-color: currentColor; font-weight: 600; }
+.new-tag { margin-left: 6px; }
