@@ -17,7 +17,7 @@ import { createEmailVerifier } from '../integrations/emailVerifier.js'
 import { createFollowUp } from './followUp.js'
 import { createAutoApproval } from './autoApproval.js'
 
-const DISCOVERY_EVERY_MS = 6 * 3600_000
+const DISCOVERY_EVERY_MS = 1 * 3600_000
 const BACKLINK_EVERY_MS = 10 * 60_000
 const REGISTRATION = new Set(['registering', 'registered', 'email_verification_pending'])
 
@@ -47,7 +47,7 @@ export function createAgent({ db, vault, activity, chrome, gmail, orchestrator, 
   const submit = createSubmitTask({ db, vault, ai, chrome, gmail, company, listings, activity, config, status, finder, playbooks, verifier })
 
   orchestrator.register('discover', async () => {
-    const r = await discovery.run({ batch: Number(getSetting(db, 'discovery_batch', 10)) })
+    const r = await discovery.run({ batch: Number(getSetting(db, 'discovery_batch', 25)) })
     for (const id of r.added) orchestrator.enqueue(id, 'qualify')
   }, { exhausted: null, failed: null })
 

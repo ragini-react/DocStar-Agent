@@ -74,6 +74,12 @@ export function createDiscovery({ db, ai, platforms, activity }) {
       const runs = Number(db.prepare(`SELECT COUNT(*) n FROM activity_logs WHERE event = 'discovery_run'`).get().n)
       const query = QUERIES[runs % QUERIES.length]
       const known = db.prepare('SELECT domain FROM platforms').all().map(r => r.domain)
+      // Sites that did not answer an earlier discovery fetch: never offered again, or the same dead
+      // entries are re-picked every run and discovery stalls without ever reaching its next source.
+      for (const r of db.prepare(`SELECT message FROM activity_logs WHERE event = 'discovery_unreachable'`).all()) {
+        const d = r.message.match(/\(([^)\s]+)\)/)?.[1]
+        if (d && !known.includes(d)) known.push(d)
+      }
       const exclude = `Exclude: link farms, PBNs, "submit to 1000 directories" services, sites that only sell paid listings, forums or subreddits where posting a link would be spam, and these already-known domains: ${known.slice(0, 300).join(', ') || 'none'}.`
       // 1. Web search, in plain text (the path where viaSocket's search runs), structured in a second call.
       let source = 'web search'
@@ -83,7 +89,10 @@ export function createDiscovery({ db, ai, platforms, activity }) {
 Use web search results only; do not open the browser or visit pages. Return only sites that appear in your search results, with their real URLs.
 ${exclude}`,
         message: `Search: ${query}. Return up to ${batch} sites as a list: name, homepage URL, submission page URL if shown, one line on why it fits.`
-      }).catch(() => '')
+      }).catch(error => {
+        activity.warn('discovery_search_failed', `Web search failed (${error.status || error.message}); using fallback sources`)
+        return ''
+      })
       let answer = { items: [] }
       const searchWorked = found && !SEARCH_UNAVAILABLE.test(found)
       for (let i = 0; searchWorked && i < 2 && !answer.items.length; i++) {
@@ -118,20 +127,33 @@ ${exclude}`,
         }
       }
 
-      // 3. Still nothing: candidates from the model's own knowledge. Every one is fetched below before it counts.
-      if (!answer.items.length) {
+      // Entries already on record or dead do not count.
+      answer.items = answer.items.filter(c => { try { return !known.includes(normalizeUrl(c.homepage).domain) } catch { return false } })
+
+      const added = []
+      let alreadyKnown = 0 // URLs recorded by an earlier crawl: never crawled or processed again
+      if (answer.items.length) {
+        activity.info('discovery_run', `Discovery (${source}): "${query}" → ${answer.items.length} candidates`)
+        await record(answer.items)
+      }
+
+      // 3. Nothing added yet: candidates from the model's own knowledge. Every one is fetched before it counts.
+      if (!added.length) {
         source = 'model knowledge (verified by fetch)'
-        answer = await ai.json({
+        const own = await ai.json({
           threadId: `discover-known-${Date.now().toString(36)}`,
           schema,
           prompt: `From your own knowledge, name real, long-running sites matching the request where ${BRAND} (${SITE_URL}), an API documentation platform, can be listed for free. Give real homepage URLs only. ${exclude} Do not browse or search.`,
           message: `${query}. Up to ${batch} sites.`
         }).catch(() => ({ items: [] }))
+        activity.info('discovery_run', `Discovery (${source}): "${query}" → ${own.items.length} candidates`)
+        await record(own.items)
       }
-      activity.info('discovery_run', `Discovery (${source}): "${query}" → ${answer.items.length} candidates`)
-      const added = []
-      let alreadyKnown = 0 // URLs recorded by an earlier crawl: never crawled or processed again
-      for (const c of answer.items.slice(0, batch)) {
+      if (alreadyKnown) activity.info('discovery_skipped_known', `Discovery skipped ${alreadyKnown} URL(s) already recorded by an earlier crawl`)
+      return { query, source, candidates: answer.items.length, added, alreadyKnown }
+
+    async function record(items) {
+      for (const c of items.slice(0, batch)) {
         let norm
         try { norm = normalizeUrl(c.homepage) } catch { continue }
         if (known.includes(norm.domain)) { alreadyKnown++; continue }
@@ -157,8 +179,7 @@ ${exclude}`,
           known.push(norm.domain, finalNorm.domain)
         }
       }
-      if (alreadyKnown) activity.info('discovery_skipped_known', `Discovery skipped ${alreadyKnown} URL(s) already recorded by an earlier crawl`)
-      return { query, source, candidates: answer.items.length, added, alreadyKnown }
+    }
     }
   }
 }

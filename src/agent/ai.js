@@ -10,9 +10,19 @@ export function createAi({ config }) {
   const ai = { send: params => viasocket.user(config.operatorUserId).ai.send(params) } // created on use
   return {
     /** A plain-text answer: the path on which viaSocket's web search reliably runs. */
-    async text({ threadId, message, prompt }) {
-      const r = await ai.send({ threadId: threadId.replace(/[^A-Za-z0-9_-]/g, '-').slice(0, 100), message, prompt, ...MODEL })
-      return String(r.content ?? '')
+    async text({ threadId, message, prompt, attempts = 3 }) {
+      let lastError
+      for (let i = 0; i < attempts; i++) {
+        try {
+          const r = await ai.send({ threadId: `${threadId}-${i}`.replace(/[^A-Za-z0-9_-]/g, '-').slice(0, 100), message, prompt, ...MODEL })
+          return String(r.content ?? '')
+        } catch (error) {
+          lastError = error
+          if (error.status && error.status < 429) throw error // a 4xx other than 429 will not get better
+        }
+        await sleep(3000 * (i + 1))
+      }
+      throw lastError
     },
 
     async json({ threadId, message, prompt, schema, attempts = 3 }) {
