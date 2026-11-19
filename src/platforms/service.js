@@ -58,7 +58,7 @@ const FROM = `FROM platforms p
 const GROUPS = {
   needs_you: ['needs_you'],
   failed: ['evaluation_failed', 'registration_failed', 'submission_failed'],
-  added: ['live_backlink', 'published', 'no_backlink', 'submitted', 'pending_platform_review'],
+  added: ['live_backlink', 'published', 'no_backlink'], // only listings verified on a public page
   in_progress: ['qualifying', 'registering', 'registered', 'email_verification_pending', 'ready_for_submission', 'submitting'],
   pipeline: ['approved', 'registering', 'registered', 'email_verification_pending', 'ready_for_submission', 'submitting']
 }

@@ -76,6 +76,23 @@ export const DONE_NEGATIVE = new Set(['rejected', 'paid_skipped', 'rejected_by_p
 export const SUCCESS = new Set(['submitted', 'pending_platform_review', 'published', 'live_backlink', 'no_backlink', 'backlink_lost'])
 export const PAUSED = new Set(['needs_you', 'blocked'])
 
+// Product activity list: one group per URL, from its status. A URL whose product was added, published or whose backlink
+// is live is processed: it is never qualified, drafted or submitted again (see orchestrator.enqueue).
+export const ACTIVITY_GROUPS = ['new', 'pending', 'product_added', 'product_published', 'backlink_completed', 'skipped']
+export const ACTIVITY_LABELS = { new: 'New', pending: 'Pending', product_added: 'Submitted, not listed yet', product_published: 'Product published',
+  backlink_completed: 'Backlink completed', skipped: 'Skipped' }
+export const PROCESSED = SUCCESS
+/** Pure: the activity group of a platform row ({ status, resume_status }). */
+export function activityGroup(row) {
+  const s = typeof row === 'string' ? row : effectiveStatus(row)
+  if (s === 'live_backlink') return 'backlink_completed'
+  if (s === 'published' || s === 'no_backlink' || s === 'backlink_lost') return 'product_published'
+  if (s === 'submitted' || s === 'pending_platform_review') return 'product_added'
+  if (s === 'discovered' || s === 'qualifying') return 'new'
+  if (DONE_NEGATIVE.has(s) || s === 'blocked') return 'skipped'
+  return 'pending'
+}
+
 const T = {
   discovered: ['qualifying'],
   qualifying: ['qualified', 'rejected', 'paid_skipped', 'evaluation_failed', 'discovered'],

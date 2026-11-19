@@ -4,6 +4,7 @@
 import { now, setSetting, getSetting } from './index.js'
 import { label, IN_PROGRESS } from '../engine/stateMachine.js'
 import { flowStage, gatherEvidence } from '../engine/maintenance.js'
+import { BRAND, SUPPORT_EMAIL } from '../agent/brand.js'
 
 const AUTH_PATH = /(sign.?up|sign.?in|log.?in|register|auth|oauth|verify|account\/new|join)/i
 const host = u => { try { return new URL(u).hostname.toLowerCase().replace(/^www\./, '') } catch { return null } }
@@ -68,8 +69,8 @@ export function repairData({ db, status, activity, orchestrator, maintenance, ex
       const resume = ev.submission_status === 'approved' ? flowStage(ev) : 'approved'
       const what = cleanReason(t?.last_error || 'The agent stopped and needs you', p.name)
       const todo = /CAPTCHA|human check/i.test(what) ? 'Open the platform in the agent\'s Chrome, complete the human check, then press Resume.'
-        : /verification email/i.test(what) ? 'Press Resume: the agent now checks Gmail itself and clicks the link. If it still fails, open the inbox (and spam) for support@docstar.io.'
-          : /last name|phone|budget|missing/i.test(what) ? 'The form asks for details the DocStar profile does not have. Fill them in the agent\'s Chrome (or add them to the profile), then press Resume.'
+        : /verification email/i.test(what) ? `Press Resume: the agent now checks Gmail itself and clicks the link. If it still fails, open the inbox (and spam) for ${SUPPORT_EMAIL}.`
+          : /last name|phone|budget|missing/i.test(what) ? `The form asks for details the ${BRAND} profile does not have. Fill them in the agent\'s Chrome (or add them to the profile), then press Resume.`
             : 'Finish the step in the agent\'s Chrome, then press Resume.'
       status.transition(p.id, 'needs_you', { actor: 'migration', force: true, resumeTo: resume, needsYou: { what, todo, where: JSON.parse(t?.checkpoint || '{}').url || null }, reason: 'reason and resume step recorded' })
       if (t && ['failed', 'cancelled'].includes(t.state) && !orchestrator.findActive(p.id, t.type)) {

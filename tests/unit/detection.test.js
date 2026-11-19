@@ -6,7 +6,7 @@ import { createFollowUp } from '../../src/agent/followUp.js'
 import { robotsAllows, looksLikeListing } from '../../src/agent/listingFinder.js'
 import { setup, platformAt } from '../helpers/setup.js'
 
-const page = (links, { status = 200, robots = '' } = {}) => async () => ({ status, html: 'x'.repeat(600), links, robots, xRobotsTag: '' })
+const page = (links, { status = 200, robots = '', text = 'DocStar: API documentation', url } = {}) => async u => ({ status, url: url || u, html: 'x'.repeat(600), text, title: '', links, robots, xRobotsTag: '' })
 
 function withBacklink(t, platformStatus, url = 'https://dir.io/p/docstar') {
   const id = platformAt(t, platformStatus, { submission: platformStatus === 'submitted' ? 'submitted' : 'published' })
@@ -30,6 +30,15 @@ test('HTTP 200 without the link is not live; a link that disappears or loses dof
   let fetchImpl = page([])
   const checker = createBacklinkChecker({ db: t.db, chrome: null, activity: t.activity, status: t.status, alerts, fetchImpl: (...a) => fetchImpl(...a) })
   const { id, b } = withBacklink(t, 'submitted')
+  // A page that is not DocStar's listing (a login redirect, a form) proves nothing: still submitted, not published.
+  fetchImpl = page([], { text: 'Sign in to continue' })
+  assert.equal((await checker.check(b)).status, 'pending')
+  assert.equal(t.status.get(id).status, 'submitted')
+  fetchImpl = page([], { url: 'https://dir.io/login?returnTo=%2Fp%2Fdocstar' })
+  assert.equal((await checker.check(b)).status, 'pending')
+  assert.equal(t.status.get(id).status, 'submitted')
+  assert.equal(t.db.prepare('SELECT published_at FROM submissions WHERE id = ?').get(b.submission_id).published_at, null)
+  fetchImpl = page([])
   assert.equal((await checker.check(b)).status, 'missing')
   assert.equal(t.status.get(id).status, 'no_backlink')
   fetchImpl = page([{ href: 'https://docstar.io/', rel: '', text: 'DocStar' }])

@@ -63,6 +63,17 @@ from any open state:  ─▶ needs_you (with what happened / what to do / where)
 from any state, by a person: Mark as done manually / Set listing URL ─▶ submitted or published, then checked
 ```
 
+- **Product Activity List** (Overview card and its own page): every URL once, grouped as New, Pending, Submitted (not listed yet),
+  Product published, Backlink completed or Skipped (`activityGroup` in the state machine). URLs found since your last
+  visit are tagged. A URL that was submitted or reached a later stage is processed: `orchestrator.enqueue` refuses to qualify,
+  draft or submit it again, and discovery skips every domain already recorded.
+- **Listed means public**: a platform counts as listed (Successfully added, published) only when its listing URL is a
+  public page that shows DocStar (`src/agent/listingUrl.js`). Dashboards, logins, submission forms and "submitted"
+  trackers never count, and a backlink check on such a page leaves the platform awaiting platform review.
+- **Brand name and URL**: always "DocStar" and `https://docstar.io/` (`BRAND` / `SITE_URL` in `src/agent/brand.js`).
+  Everything the agent types, drafts or stores is rewritten from "DocStar Support" and from URL variants (http://,
+  www.). The profile's website cannot be saved as anything else, and a backlink counts only when it points to
+  docstar.io itself.
 - **Needs you** is one list: platforms with status `needs_you`. The overview count, the Needs-you page and the
   platform filter all come from `src/platforms/views.js`; every overview card is the length of the list it opens.
 - **Failed** is platforms in `evaluation_failed`, `registration_failed` or `submission_failed`, each with the error, the
@@ -232,3 +243,17 @@ npm test     # unit + integration (the browser suite needs Google Chrome; it is 
   emails, URL queries, tokens and one-click links.
 - The agent honours each platform's automation policy and robots.txt, never solves CAPTCHAs, and keeps to the sign-up
   limits.
+
+## Renaming the product
+
+The name, site and support email live only in `brand.config.json`; everything else reads them from `src/agent/brand.js`
+(the dashboard gets them from `/brand.js` and a filled-in `index.html`). To rebrand everything in one step:
+
+```
+node scripts/rebrand.mjs --name "NewName" [--domain newname.com] [--email support@newname.com] [--dry-run]
+```
+
+It updates `brand.config.json` and sweeps the old name out of docs, comments, tests and seed data. Internal identifiers
+(`DOCSTAR_*` env vars, `docstar.db`, cookie and CSRF header names, the viaSocket operator id, the Embarko app name)
+stay as they are so nothing breaks. Then restart, and edit or re-draft the company profile on the dashboard.
+For a quick try without editing files, set `BRAND_NAME`, `BRAND_DOMAIN` and `BRAND_SUPPORT_EMAIL`.

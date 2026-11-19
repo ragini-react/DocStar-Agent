@@ -4,7 +4,7 @@
 import express from 'express'
 import { randomBytes } from 'node:crypto'
 import path from 'node:path'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { ROOT } from '../config/index.js'
 import { createAdminPassword } from '../security/adminPassword.js'
 import { safeEqual } from '../security/crypto.js'
@@ -16,6 +16,7 @@ import { signupSlot } from '../engine/rateLimit.js'
 import { toCsv } from '../platforms/service.js'
 import { resolveFinalUrl } from '../platforms/domains.js'
 import { actionPage, esc } from '../alerts/notify.js'
+import { BRAND, BRAND_SLUG, SITE_HOST, SITE_URL, SUPPORT_EMAIL, fillBrand, isSiteUrl } from '../agent/brand.js'
 
 const SESSION_MS = 12 * 3600_000 // absolute limit
 const IDLE_MS = 30 * 60_000 // signed out after 30 minutes without a request
@@ -266,7 +267,7 @@ export function createApp({ config, db, vault, activity, gmail, chrome, orchestr
   app.delete('/api/platforms/:id', wrap(async (req, res) => { platforms.remove(Number(req.params.id)); res.json({ ok: true }) }))
   app.post('/api/platforms/import-seeds', wrap(async (req, res) => res.json(platforms.importSeeds())))
   app.get('/api/export/platforms.csv', (req, res) => {
-    res.set({ 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="docstar-platforms-${now().slice(0, 10)}.csv"` })
+    res.set({ 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="${BRAND_SLUG}-platforms-${now().slice(0, 10)}.csv"` })
     res.send('﻿' + platforms.toCsv())
     activity.info('csv_exported', 'Platforms exported to CSV')
   })
@@ -286,8 +287,13 @@ export function createApp({ config, db, vault, activity, gmail, chrome, orchestr
   // DocStar profile: the only facts listings may use
   app.get('/api/company', (req, res) => res.json({ fields: agent.company.fields, values: agent.company.get(), approved: Boolean(agent.company.approved()) }))
   app.put('/api/company', wrap(async (req, res) => {
-    for (const [k, v] of Object.entries(req.body || {})) agent.company.save(k, String(v).slice(0, 5000))
-    activity.info('company_edited', `DocStar profile edited (${Object.keys(req.body || {}).join(', ')}); needs approval again`)
+    const body = req.body || {}
+    // Checked before anything is saved, so a wrong website never leaves the profile half-edited.
+    if ('website' in body && !isSiteUrl(/^https?:\/\//i.test(String(body.website).trim()) ? String(body.website).trim() : `https://${String(body.website).trim()}`)) {
+      return res.status(400).json({ error: `Website must be ${SITE_URL}` })
+    }
+    for (const [k, v] of Object.entries(body)) agent.company.save(k, String(v).slice(0, 5000))
+    activity.info('company_edited', `${BRAND} profile edited (${Object.keys(req.body || {}).join(', ')}); needs approval again`)
     res.json({ ok: true })
   }))
   app.post('/api/company/draft', wrap(async (req, res) => res.json(await agent.company.draftFromWebsite())))
@@ -322,6 +328,10 @@ export function createApp({ config, db, vault, activity, gmail, chrome, orchestr
   }))
   app.get('/api/needs-you', (req, res) => res.json(views.needsYou()))
   app.get('/api/added', (req, res) => res.json(views.added()))
+  app.get('/api/product-activity', (req, res) => {
+    const since = /^\d{4}-\d\d-\d\dT[\d:.]+Z$/.test(String(req.query.since || '')) ? String(req.query.since) : null
+    res.json(views.productActivity({ since }))
+  })
   app.get('/api/metrics', (req, res) => res.json(reports.metrics({ days: Math.min(Number(req.query.days) || 30, 365) })))
   app.get('/api/summary', (req, res) => {
     const s = reports.summary({ days: Math.min(Number(req.query.days) || 7, 90) })
@@ -331,15 +341,14 @@ export function createApp({ config, db, vault, activity, gmail, chrome, orchestr
     const a = views.added()
     const d = t => (t ? t.slice(0, 10) : '')
     const ms = (r, k) => d(r.timeline.find(x => x.key === k)?.at)
-    const rows = [...a.live.map(r => ({ ...r, group: 'Live with backlink' })), ...a.published.map(r => ({ ...r, group: 'Published, backlink not found yet' })),
-      ...a.awaiting.map(r => ({ ...r, group: 'Submitted, awaiting platform review' }))]
+    const rows = [...a.live.map(r => ({ ...r, group: 'Live with backlink' })), ...a.published.map(r => ({ ...r, group: 'Published, backlink not found yet' }))]
     const cols = [['Group', 'group'], ['Platform', 'name'], ['Domain', 'domain'], ['Listing URL', 'listing_url'], ['Backlink page', 'backlink_page'],
       ['Link', r => (r.backlink_status === 'live' ? (r.is_dofollow ? 'dofollow' : r.rel || 'nofollow') : '')], ['Anchor text', 'anchor_text'],
       ['Found', 'found'], ['First verified', r => d(r.first_seen_at)], ['Last re-verified', r => d(r.last_checked_at)], ['Account', 'account_email'],
       ['Signed up with', r => (r.login_method ? label(r.login_method) : '')], ['Submitted', r => d(r.submitted_at)], ['Days waiting', 'waitingDays'],
       ['Discovered', r => ms(r, 'discovered')], ['Qualified', r => ms(r, 'qualified')], ['Approved', r => ms(r, 'approved')], ['Account created', r => ms(r, 'registered')],
       ['Published', r => ms(r, 'published')], ['Live', r => ms(r, 'live')], ['Added by', r => (r.manual ? 'a person' : 'the agent')]]
-    res.set({ 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="docstar-successfully-added-${now().slice(0, 10)}.csv"` })
+    res.set({ 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="${BRAND_SLUG}-successfully-added-${now().slice(0, 10)}.csv"` })
     res.send('\ufeff' + toCsv(cols, rows))
     activity.info('csv_exported', 'Successfully added exported to CSV')
   })
@@ -452,9 +461,11 @@ export function createApp({ config, db, vault, activity, gmail, chrome, orchestr
   app.post('/api/gmail/disconnect', wrap(async (req, res) => { gmail.disconnect(); res.json({ connected: false }) }))
 
   // Credentials: listed without secrets; one revealed only after the admin password is typed again.
-  app.get('/api/credentials', (req, res) => res.json(db.prepare(`SELECT a.id, p.name platform, p.domain, a.email, a.login_method, a.status,
-      a.created_at, a.signup_completed_at, a.signup_inferred, (c.id IS NOT NULL) has_password, c.revealed_at
-    FROM accounts a JOIN platforms p ON p.id = a.platform_id LEFT JOIN credentials c ON c.account_id = a.id ORDER BY p.name`).all()))
+  app.get('/api/credentials', (req, res) => res.json(db.prepare(`SELECT a.id, p.id platform_id, p.name platform, p.domain, p.url platform_url, a.profile_url, p.status platform_status,
+      CASE WHEN p.status IN ('published','live_backlink','no_backlink') THEN s.listing_url END listing_url,
+      a.email, a.login_method, a.status, a.created_at, a.signup_completed_at, a.signup_inferred, (c.id IS NOT NULL) has_password, c.revealed_at
+    FROM accounts a JOIN platforms p ON p.id = a.platform_id LEFT JOIN credentials c ON c.account_id = a.id
+    LEFT JOIN submissions s ON s.platform_id = p.id ORDER BY p.name`).all()))
   app.post('/api/credentials/:accountId/reveal', wrap(async (req, res) => {
     if (!checkPassword(req, req.body?.password)) {
       activity.warn('credential_reveal_denied', 'Credential reveal refused: wrong admin password')
@@ -508,6 +519,11 @@ export function createApp({ config, db, vault, activity, gmail, chrome, orchestr
   app.get('/labels.js', (req, res) => res.type('application/javascript').send(
     `export const STATUSES = ${JSON.stringify(STATUSES)};\nexport const LABELS = ${JSON.stringify({ ...OTHER_LABELS, ...LABELS })};\n` +
     `export const GROUPS = ${JSON.stringify(platforms.GROUPS)};\nexport const label = s => LABELS[s] ?? String(s ?? '').replace(/_/g, ' ');\n`))
+  // The brand (name, site, support email) from brand.config.json: filled into the page and offered as a module.
+  app.get('/brand.js', (req, res) => res.type('application/javascript').send(
+    `export const BRAND = ${JSON.stringify(BRAND)}, SITE_HOST = ${JSON.stringify(SITE_HOST)}, SITE_URL = ${JSON.stringify(SITE_URL)}, SUPPORT_EMAIL = ${JSON.stringify(SUPPORT_EMAIL)};\n`))
+  const indexHtml = fillBrand(readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8'))
+  app.get(['/', '/index.html'], (req, res) => res.type('html').send(indexHtml))
   app.use(express.static(path.join(ROOT, 'public'), { index: 'index.html' }))
 
   // Errors: masked message to the client and the log, never a stack or a secret.

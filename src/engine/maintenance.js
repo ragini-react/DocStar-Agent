@@ -9,6 +9,7 @@
 import { now, numSetting } from '../db/index.js'
 import { FAILED, IN_PROGRESS, PAUSED, SUCCESS, canTransition, effectiveStatus, findContradictions, label, substatusFixes } from './stateMachine.js'
 import { JOINED, parseNeedsYou } from './status.js'
+import { SITE_HOST } from '../agent/brand.js'
 
 const SWEEP_MS = 5 * 60_000
 const RECONCILE_MS = 60 * 60_000
@@ -66,7 +67,7 @@ export function computeStatus(ev, { nofollowLive = true } = {}) {
   if (absent) {
     const want = ev.first_seen_at ? 'backlink_lost' : 'no_backlink'
     if (cur === want) return null
-    return { status: want, reason: ev.first_seen_at ? 'the link seen before is gone' : 'the listing page has no link to docstar.io' }
+    return { status: want, reason: ev.first_seen_at ? 'the link seen before is gone' : `the listing page has no link to ${SITE_HOST}` }
   }
   // 2. The submission record: work on the platform itself, whoever did it.
   const bySubmission = { published: 'published', pending_approval: 'pending_platform_review', submitted: 'submitted', rejected: 'rejected_by_platform' }[ev.submission_status]
