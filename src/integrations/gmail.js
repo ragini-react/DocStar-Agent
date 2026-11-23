@@ -58,7 +58,13 @@ export function createGmail({ db, vault, activity, viasocket, config }) {
       const connections = await user().listConnections()
       const match = connections.find(c => c.id === authId && String(c.id).endsWith(`_${serviceId}`))
       if (!match) throw new Error('That connection does not belong to the operator or is not Gmail')
-      const scriptId = (await user().findEnabled(serviceId)) ?? (await user().enable(serviceId, authId)).scriptId
+      // The script must run on THIS connection: an older script keeps its old connection and old consent
+      // (e.g. read-only), so reusing it after a reconnect silently drops newly granted scopes.
+      const flows = (await user().listFlows()).filter(f => f.serviceId === serviceId && (f.status === 'active' || f.status === 'paused'))
+      const own = flows.find(f => f.authId === authId)
+      if (own?.status === 'paused') await user().setFlowStatus(own.id, 1)
+      const scriptId = own?.id ?? (await user().enable(serviceId, authId)).scriptId
+      for (const f of flows) if (f.id !== scriptId && f.status === 'active') await user().disableFlow(f.id) // paused, not deleted
       let account = null
       try { account = JSON.parse(match.connection_label || '{}').Email ?? null } catch {}
       write({ authId, scriptId }, { account, connectedAt: now(), isExpired: Boolean(match.isExpired) })
