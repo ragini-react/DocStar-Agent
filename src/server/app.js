@@ -16,6 +16,7 @@ import { signupSlot } from '../engine/rateLimit.js'
 import { toCsv } from '../platforms/service.js'
 import { resolveFinalUrl } from '../platforms/domains.js'
 import { actionPage, esc } from '../alerts/notify.js'
+import { createGtm } from '../gtm/service.js'
 import { BRAND, BRAND_SLUG, SITE_HOST, SITE_URL, SUPPORT_EMAIL, fillBrand, isSiteUrl } from '../agent/brand.js'
 
 const SESSION_MS = 12 * 3600_000 // absolute limit
@@ -510,6 +511,18 @@ export function createApp({ config, db, vault, activity, gmail, chrome, orchestr
     res.json(allSettings())
   }))
 
+  // Growth: ICP research and lead pipeline. Read and status-tracking only; there is no send endpoint by design.
+  const gtm = createGtm({ db, root: ROOT })
+  gtm.importLeads()
+  app.get('/api/gtm/summary', (req, res) => res.json(gtm.summary()))
+  app.get('/api/gtm/icps', (req, res) => res.json(gtm.icps()))
+  app.get('/api/gtm/leads', (req, res) => res.json({ leads: gtm.leads(), statuses: gtm.statuses }))
+  app.get('/api/gtm/channels', (req, res) => res.json(gtm.channels()))
+  app.get('/api/gtm/doc/:name', (req, res) => res.type('text/plain').send(gtm.doc(req.params.name)))
+  app.post('/api/gtm/import', (req, res) => res.json(gtm.importLeads()))
+  app.patch('/api/gtm/leads/:key', (req, res) => {
+    try { gtm.update(req.params.key, req.body || {}); res.json({ ok: true }) } catch (e) { res.status(400).json({ error: e.message }) }
+  })
   app.get('/api/health', (req, res) => res.json({ ok: true, db: db.prepare('SELECT 1 ok').get().ok === 1 }))
   app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }))
 

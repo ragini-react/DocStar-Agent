@@ -3,3 +3,7 @@ node_modules/
 data/
 *.log
 .env.backup*
+
+# Growth: lead data, contacts and outreach drafts stay local
+gtm/leads/
+gtm/email-drafts.md
