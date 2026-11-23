@@ -585,11 +585,16 @@ async function gtmFindPoll() {
   clearTimeout(gtmFindTimer)
   let j; try { const r = await fetch('/api/outreach/find', { credentials: 'same-origin' }); if (!r.ok) return; j = await r.json() } catch { return }
   $('#gtm-find-log').innerHTML = j.log.map(m => `<li>${esc(m)}</li>`).join('')
-  $('#gtm-find-btn').disabled = j.running; $('#gtm-find-btn').textContent = j.running ? 'Searching…' : 'Find companies & prepare emails'
+  $('#gtm-find-btn').disabled = j.running; $('#gtm-find-btn').textContent = j.running ? (j.current ? `Checking ${j.current}…` : 'Searching…') : 'Find companies & prepare emails'
+  $('#gtm-find-stop').hidden = !j.running; $('#gtm-find-stop').disabled = Boolean(j.stop); $('#gtm-find-stop').textContent = j.stop ? 'Stopping…' : 'Stop'
   if (j.running) gtmFindTimer = setTimeout(gtmFindPoll, 3000)
 }
 $('#gtm-find-btn').addEventListener('click', async () => {
   try { await api('/api/outreach/find', { method: 'POST', body: { icp: $('#gtm-find-icp').value || null, max: 5 } }) } catch (e) { alert(e.message) }
+  gtmFindPoll()
+})
+$('#gtm-find-stop').addEventListener('click', async () => {
+  try { await api('/api/outreach/find/stop', { method: 'POST', body: {} }) } catch (e) { alert(e.message) }
   gtmFindPoll()
 })
 for (const id of ['#gtm-q', '#gtm-fseg', '#gtm-fpri']) $(id).addEventListener('input', renderGtmLeads)
