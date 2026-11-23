@@ -43,7 +43,12 @@ export function createGmail({ db, vault, activity, viasocket, config }) {
       if (process.env.GTM_OUTREACH !== '1') throw new Error('Sending is not enabled here')
       const res = await runAction(config.gmail.sendAction, { to, subject, messageBody: body, ...(fromName ? { fromName } : {}) })
       const out = res?.data ?? res
-      return { id: out?.id ?? null, threadId: out?.threadId ?? null }
+      // viaSocket returns Google's errors as data, not a throw: only a message id means Gmail sent it.
+      if (!out?.id) {
+        const msg = out?.originalError?.error?.message || out?.message || 'no message id returned'
+        throw new Error(/scope/i.test(msg) ? 'Gmail is connected without send permission: reconnect Gmail and allow sending' : `Gmail did not send: ${msg}`)
+      }
+      return { id: out.id, threadId: out.threadId ?? null }
     },
     embedToken: () => user().token(),
 
