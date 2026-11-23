@@ -183,6 +183,7 @@ export function createMirrorReceiver({ db, activity, token, alerts = null }) {
     state TEXT NOT NULL DEFAULT 'queued', created_at TEXT NOT NULL, sent_at TEXT, dedupe_key TEXT, result TEXT, applied_at TEXT, label TEXT,
     http_status INTEGER, attempts INTEGER NOT NULL DEFAULT 0)`)
   let status = JSON.parse(getSetting(db, 'mirror_status', 'null') || 'null') // last live status from the agent
+  db.prepare(`UPDATE mirror_commands SET state = 'queued' WHERE state = 'pending'`).run() // left by the old default
   let conflictLoggedAt = 0
   let behindTimer = null
 
@@ -292,7 +293,8 @@ export function createMirrorReceiver({ db, activity, token, alerts = null }) {
         .get(dedupeKey, new Date(Date.now() - DEDUPE_MS).toISOString())
       if (existing) return { ...commandRow(existing.id), duplicate: true }
       const label = describeCommand(db, method, path, body || {})
-      const id = db.prepare(`INSERT INTO mirror_commands (method, path, body, created_at, dedupe_key, label) VALUES (?, ?, ?, ?, ?, ?) RETURNING id`)
+      // State set explicitly: a table created by an older version defaults to 'pending', which is never handed out.
+      const id = db.prepare(`INSERT INTO mirror_commands (method, path, body, state, created_at, dedupe_key, label) VALUES (?, ?, ?, 'queued', ?, ?, ?) RETURNING id`)
         .get(method, path, b, now(), dedupeKey, label).id
       const row = commandRow(id)
       activity.feed.emit('command', row)
