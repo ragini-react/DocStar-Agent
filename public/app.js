@@ -574,9 +574,24 @@ loaders.growth = async () => {
   $('#gtm-icps').innerHTML = icps.map(i => `<tr><td>${i.tier}</td><td><strong>${esc(i.name)}</strong><div class="muted small">${esc(i.who)}</div></td><td>${esc(i.segment)}</td><td class="small">${esc(i.pain)}</td><td class="small">${esc(i.docstar_fit)}</td><td class="small">${esc(i.buyer)}</td></tr>`).join('')
   gtmLeads = ld.leads; gtmStatuses = ld.statuses; renderGtmLeads()
   // The Outreach page exists only where sending is set up (the local copy); hidden elsewhere.
-  try { const o = await fetch('/api/outreach', { credentials: 'same-origin' }); $('#gtm-outreach-bar').hidden = !o.ok } catch { $('#gtm-outreach-bar').hidden = true }
+  try { const o = await fetch('/api/outreach', { credentials: 'same-origin' }); $('#gtm-outreach-bar').hidden = !o.ok; $('#gtm-find-card').hidden = !o.ok } catch { $('#gtm-outreach-bar').hidden = true; $('#gtm-find-card').hidden = true }
+  if ($('#gtm-find-icp').options.length === 1) $('#gtm-find-icp').insertAdjacentHTML('beforeend', icps.map(i => `<option value="${esc(i.id)}">${esc(i.name)}</option>`).join(''))
+  gtmFindPoll()
   $('#gtm-channels').innerHTML = ch.map(c => `<tr><td><a href="${esc(c.url)}" target="_blank" rel="noopener">${esc(c.name)}</a></td><td>${esc(c.type)}</td><td class="small">${esc(c.why_relevant)}</td><td class="small">${esc(c.how_to_engage)}</td><td>${esc(c.effort)}</td></tr>`).join('')
 }
+// Local only: the ICP company search runs on the server; this shows its progress.
+let gtmFindTimer = null
+async function gtmFindPoll() {
+  clearTimeout(gtmFindTimer)
+  let j; try { const r = await fetch('/api/outreach/find', { credentials: 'same-origin' }); if (!r.ok) return; j = await r.json() } catch { return }
+  $('#gtm-find-log').innerHTML = j.log.map(m => `<li>${esc(m)}</li>`).join('')
+  $('#gtm-find-btn').disabled = j.running; $('#gtm-find-btn').textContent = j.running ? 'Searching…' : 'Find companies & prepare emails'
+  if (j.running) gtmFindTimer = setTimeout(gtmFindPoll, 3000)
+}
+$('#gtm-find-btn').addEventListener('click', async () => {
+  try { await api('/api/outreach/find', { method: 'POST', body: { icp: $('#gtm-find-icp').value || null, max: 5 } }) } catch (e) { alert(e.message) }
+  gtmFindPoll()
+})
 for (const id of ['#gtm-q', '#gtm-fseg', '#gtm-fpri']) $(id).addEventListener('input', renderGtmLeads)
 const gtmActivate = e => {
   const k = e.target.closest('[data-gtm-filter]'); if (k) return setGtmFilter(k.dataset.gtmFilter)

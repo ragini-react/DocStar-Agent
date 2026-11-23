@@ -527,7 +527,7 @@ export function createApp({ config, db, vault, activity, gmail, chrome, orchestr
     try { gtm.update(req.params.key, req.body || {}); res.json({ ok: true }) } catch (e) { res.status(400).json({ error: e.message }) }
   })
   app.get('/api/health', (req, res) => res.json({ ok: true, db: db.prepare('SELECT 1 ok').get().ok === 1 }))
-  if (localOutreach && !config.hosted) localOutreach.register(app, { db, gmail, gtm, activity, root: ROOT })
+  if (localOutreach && !config.hosted) localOutreach.register(app, { db, gmail, gtm, activity, root: ROOT, config })
   app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }))
 
   // The browser half of viaSocket Connect, served from the installed package.
