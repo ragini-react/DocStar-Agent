@@ -172,8 +172,8 @@ export function createViews({ db }) {
       failed: fl.length,
       needsYou: ny.length,
       byStatus,
-      byCategory: db.prepare(`SELECT COALESCE(c.name, 'Uncategorised') name, COUNT(*) n FROM platforms p
-        LEFT JOIN platform_categories c ON c.id = p.category_id GROUP BY 1 ORDER BY n DESC`).all()
+      byCategory: db.prepare(`SELECT COALESCE(c.name, 'Uncategorised') name, c.slug slug, COUNT(*) n FROM platforms p
+        LEFT JOIN platform_categories c ON c.id = p.category_id GROUP BY 1, 2 ORDER BY n DESC`).all()
     }
   }
 
