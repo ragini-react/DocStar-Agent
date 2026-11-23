@@ -527,6 +527,18 @@ export function createApp({ config, db, vault, activity, gmail, chrome, orchestr
     try { gtm.update(req.params.key, req.body || {}); res.json({ ok: true }) } catch (e) { res.status(400).json({ error: e.message }) }
   })
   app.get('/api/health', (req, res) => res.json({ ok: true, db: db.prepare('SELECT 1 ok').get().ok === 1 }))
+  // Outreach: lists come from the database (written by the local outreach module, mirrored to the hosted copy).
+  // Searching and sending run only on the Mac; on the hosted copy those POSTs are queued for the Mac like any change.
+  const outreachOn = () => Boolean(localOutreach && !config.hosted) || mirroring()
+  app.get('/api/outreach', (req, res) => {
+    if (!outreachOn()) return res.status(404).json({ error: 'Not found' })
+    res.json({ enabled: true, from: 'DocStar by Walkover <support@docstar.io>', emails: gtm.outreachEmails() })
+  })
+  app.get('/api/outreach/find', (req, res) => {
+    if (!outreachOn()) return res.status(404).json({ error: 'Not found' })
+    res.json(JSON.parse(getSetting(db, 'gtm_find_job', 'null') || 'null') || { running: false, log: [] })
+  })
+  app.get('/outreach', (req, res, next) => (outreachOn() ? res.sendFile(path.join(ROOT, 'public', 'outreach.html')) : next()))
   if (localOutreach && !config.hosted) localOutreach.register(app, { db, gmail, gtm, activity, root: ROOT, config })
   app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }))
 
