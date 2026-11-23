@@ -1,0 +1,262 @@
+[
+ {
+  "name": "Hacker News - Show HN",
+  "type": "launch",
+  "url": "https://news.ycombinator.com/showhn.html",
+  "audience": "Developers, founders",
+  "why_relevant": "High-signal dev audience; devtools do well",
+  "how_to_engage": "One Show HN with free try-it, no voting rings; founder answers comments",
+  "effort": "Medium",
+  "verified": false
+ },
+ {
+  "name": "Indie Hackers",
+  "type": "community",
+  "url": "https://www.indiehackers.com",
+  "audience": "Bootstrapped founders",
+  "why_relevant": "Indie API builders need cheap docs",
+  "how_to_engage": "Build-in-public posts, milestones; no drive-by links",
+  "effort": "Low",
+  "verified": false
+ },
+ {
+  "name": "r/SaaS",
+  "type": "community",
+  "url": "https://www.reddit.com/r/SaaS/",
+  "audience": "SaaS founders",
+  "why_relevant": "Founders with APIs",
+  "how_to_engage": "Follow sub's self-promo rules (promo threads only); share learnings",
+  "effort": "Low",
+  "verified": false
+ },
+ {
+  "name": "r/selfhosted",
+  "type": "community",
+  "url": "https://www.reddit.com/r/selfhosted/",
+  "audience": "Self-hosted OSS maintainers/users",
+  "why_relevant": "Many OSS projects with thin API docs",
+  "how_to_engage": "Contribute docs examples for OSS projects; follow sub's promo rules",
+  "effort": "Medium",
+  "verified": false
+ },
+ {
+  "name": "r/webdev",
+  "type": "community",
+  "url": "https://www.reddit.com/r/webdev/",
+  "audience": "Web developers",
+  "why_relevant": "API builders",
+  "how_to_engage": "Showoff Saturday only for promo; otherwise helpful answers",
+  "effort": "Low",
+  "verified": false
+ },
+ {
+  "name": "r/mcp",
+  "type": "community",
+  "url": "https://www.reddit.com/r/mcp/",
+  "audience": "MCP builders",
+  "why_relevant": "Hosted MCP from docs is core feature",
+  "how_to_engage": "Share technical posts on docs->MCP; respect flair rules",
+  "effort": "Low",
+  "verified": false
+ },
+ {
+  "name": "dev.to",
+  "type": "community",
+  "url": "https://dev.to",
+  "audience": "Developers",
+  "why_relevant": "Tutorial-driven distribution",
+  "how_to_engage": "Publish tutorials (OpenAPI->MCP, llms.txt) with #api #mcp tags",
+  "effort": "Medium",
+  "verified": false
+ },
+ {
+  "name": "Hashnode",
+  "type": "community",
+  "url": "https://hashnode.com",
+  "audience": "Developer bloggers",
+  "why_relevant": "Dev blogging + SEO",
+  "how_to_engage": "Cross-post technical guides via canonical URL",
+  "effort": "Low",
+  "verified": false
+ },
+ {
+  "name": "Product Hunt",
+  "type": "launch",
+  "url": "https://www.producthunt.com",
+  "audience": "Early adopters, makers",
+  "why_relevant": "Devtools category launches",
+  "how_to_engage": "Prepared launch day with demo; no paid upvotes",
+  "effort": "High",
+  "verified": false
+ },
+ {
+  "name": "Model Context Protocol Discord / GitHub discussions",
+  "type": "community",
+  "url": "https://github.com/modelcontextprotocol",
+  "audience": "MCP developers",
+  "why_relevant": "Ecosystem hub",
+  "how_to_engage": "Participate in discussions; share only in showcase channels",
+  "effort": "Medium",
+  "verified": false
+ },
+ {
+  "name": "Official MCP Registry",
+  "type": "directory",
+  "url": "https://registry.modelcontextprotocol.io",
+  "audience": "Agent/MCP users",
+  "why_relevant": "Listing for discovery",
+  "how_to_engage": "List DocStar's MCP server; offer users to publish theirs",
+  "effort": "Low",
+  "verified": false
+ },
+ {
+  "name": "Smithery",
+  "type": "directory",
+  "url": "https://smithery.ai",
+  "audience": "MCP users and builders",
+  "why_relevant": "Largest MCP server directory",
+  "how_to_engage": "List DocStar MCP; integrate publishing of customer MCPs",
+  "effort": "Low",
+  "verified": false
+ },
+ {
+  "name": "Glama MCP directory",
+  "type": "directory",
+  "url": "https://glama.ai/mcp/servers",
+  "audience": "MCP users",
+  "why_relevant": "MCP discovery",
+  "how_to_engage": "Submit server listing",
+  "effort": "Low",
+  "verified": false
+ },
+ {
+  "name": "Cursor Community Forum",
+  "type": "forum",
+  "url": "https://forum.cursor.com",
+  "audience": "Cursor users",
+  "why_relevant": "Coding-agent users generating docs",
+  "how_to_engage": "Answer MCP/docs questions; showcase category only",
+  "effort": "Low",
+  "verified": false
+ },
+ {
+  "name": "API Evangelist (Kin Lane)",
+  "type": "creator",
+  "url": "https://apievangelist.com",
+  "audience": "API strategists",
+  "why_relevant": "Long-running API industry voice",
+  "how_to_engage": "Pitch thoughtful story on agent-readable docs",
+  "effort": "Medium",
+  "verified": false
+ },
+ {
+  "name": "Nordic APIs",
+  "type": "newsletter",
+  "url": "https://nordicapis.com",
+  "audience": "API practitioners",
+  "why_relevant": "Blog, newsletter, events",
+  "how_to_engage": "Guest post submission on llms.txt/MCP for APIs",
+  "effort": "Medium",
+  "verified": false
+ },
+ {
+  "name": "APIs You Won't Hate",
+  "type": "community",
+  "url": "https://apisyouwonthate.com",
+  "audience": "API developers",
+  "why_relevant": "API design community + Slack",
+  "how_to_engage": "Join community; contribute knowledge, sponsor if allowed",
+  "effort": "Medium",
+  "verified": false
+ },
+ {
+  "name": "API Days",
+  "type": "event",
+  "url": "https://www.apidays.global",
+  "audience": "API leaders, enterprises",
+  "why_relevant": "Largest API conference series",
+  "how_to_engage": "CFP talk or startup booth",
+  "effort": "High",
+  "verified": false
+ },
+ {
+  "name": "Postman API Network",
+  "type": "directory",
+  "url": "https://www.postman.com/explore",
+  "audience": "API producers/consumers",
+  "why_relevant": "Import source; producers with Postman-only docs",
+  "how_to_engage": "Publish example workspace; Postman import story",
+  "effort": "Low",
+  "verified": false
+ },
+ {
+  "name": "Kong (API gateway) partner/plugin hub",
+  "type": "partner",
+  "url": "https://konghq.com/partners",
+  "audience": "API gateway users",
+  "why_relevant": "Gateway customers need portals",
+  "how_to_engage": "Explore partnership/integration listing",
+  "effort": "High",
+  "verified": false
+ },
+ {
+  "name": "Zuplo",
+  "type": "partner",
+  "url": "https://zuplo.com",
+  "audience": "API-first startups",
+  "why_relevant": "Gateway with dev portal; integration/co-marketing",
+  "how_to_engage": "Integration content, partnership outreach",
+  "effort": "Medium",
+  "verified": false
+ },
+ {
+  "name": "GitHub Marketplace",
+  "type": "partner",
+  "url": "https://github.com/marketplace",
+  "audience": "Developers",
+  "why_relevant": "Drift detection GitHub App distribution",
+  "how_to_engage": "Publish GitHub App/Action for docs drift",
+  "effort": "Medium",
+  "verified": false
+ },
+ {
+  "name": "Console.dev newsletter",
+  "type": "newsletter",
+  "url": "https://console.dev",
+  "audience": "Devtools enthusiasts",
+  "why_relevant": "Curated devtools reviews",
+  "how_to_engage": "Submit tool for review per their guidelines",
+  "effort": "Low",
+  "verified": false
+ },
+ {
+  "name": "TLDR Web Dev / TLDR newsletters",
+  "type": "newsletter",
+  "url": "https://tldr.tech",
+  "audience": "Developers",
+  "why_relevant": "Large dev newsletter, sponsorship",
+  "how_to_engage": "Sponsored slot when budget allows",
+  "effort": "Medium",
+  "verified": false
+ },
+ {
+  "name": "Changelog podcast & News",
+  "type": "creator",
+  "url": "https://changelog.com",
+  "audience": "Developers",
+  "why_relevant": "Devtools podcast/newsletter",
+  "how_to_engage": "Submit news; pitch founder interview",
+  "effort": "Medium",
+  "verified": false
+ },
+ {
+  "name": "Fireship / devtools YouTube creators",
+  "type": "creator",
+  "url": "https://www.youtube.com/@Fireship",
+  "audience": "Developers",
+  "why_relevant": "Massive dev reach",
+  "how_to_engage": "Sponsorship inquiry via published channel contact",
+  "effort": "High",
+  "verified": false
+ }
+]
