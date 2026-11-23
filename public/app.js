@@ -580,21 +580,22 @@ loaders.growth = async () => {
   $('#gtm-channels').innerHTML = ch.map(c => `<tr><td><a href="${esc(c.url)}" target="_blank" rel="noopener">${esc(c.name)}</a></td><td>${esc(c.type)}</td><td class="small">${esc(c.why_relevant)}</td><td class="small">${esc(c.how_to_engage)}</td><td>${esc(c.effort)}</td></tr>`).join('')
 }
 // Local only: the ICP company search runs on the server; this shows its progress.
-let gtmFindTimer = null
+let gtmFindTimer = null, gtmFindWaitUntil = 0 // on the hosted copy a click reaches the Mac a few seconds later
 async function gtmFindPoll() {
   clearTimeout(gtmFindTimer)
   let j; try { const r = await fetch('/api/outreach/find', { credentials: 'same-origin' }); if (!r.ok) return; j = await r.json() } catch { return }
   $('#gtm-find-log').innerHTML = j.log.map(m => `<li>${esc(m)}</li>`).join('')
   $('#gtm-find-btn').disabled = j.running; $('#gtm-find-btn').textContent = j.running ? (j.current ? `Checking ${j.current}…` : 'Searching…') : 'Find companies & prepare emails'
   $('#gtm-find-stop').hidden = !j.running; $('#gtm-find-stop').disabled = Boolean(j.stop); $('#gtm-find-stop').textContent = j.stop ? 'Stopping…' : 'Stop'
-  if (j.running) gtmFindTimer = setTimeout(gtmFindPoll, 3000)
+  if (j.running || Date.now() < gtmFindWaitUntil) gtmFindTimer = setTimeout(gtmFindPoll, 3000)
+  if (j.running) gtmFindWaitUntil = 0
 }
 $('#gtm-find-btn').addEventListener('click', async () => {
-  try { await api('/api/outreach/find', { method: 'POST', body: { icp: $('#gtm-find-icp').value || null, max: 5 } }) } catch (e) { alert(e.message) }
+  try { const r = await api('/api/outreach/find', { method: 'POST', body: { icp: $('#gtm-find-icp').value || null, max: 5 } }); if (r?.queued) { gtmFindWaitUntil = Date.now() + 60_000; $('#gtm-find-btn').disabled = true; $('#gtm-find-btn').textContent = 'Sent to the Mac…' } } catch (e) { alert(e.message) }
   gtmFindPoll()
 })
 $('#gtm-find-stop').addEventListener('click', async () => {
-  try { await api('/api/outreach/find/stop', { method: 'POST', body: {} }) } catch (e) { alert(e.message) }
+  try { const r = await api('/api/outreach/find/stop', { method: 'POST', body: {} }); if (r?.queued) { gtmFindWaitUntil = Date.now() + 30_000; $('#gtm-find-stop').disabled = true; $('#gtm-find-stop').textContent = 'Stopping…' } } catch (e) { alert(e.message) }
   gtmFindPoll()
 })
 for (const id of ['#gtm-q', '#gtm-fseg', '#gtm-fpri']) $(id).addEventListener('input', renderGtmLeads)

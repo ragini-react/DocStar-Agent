@@ -21,8 +21,8 @@ import { BRAND } from '../agent/brand.js'
 // Parents before children; deleted in reverse.
 export const MIRROR_TABLES = ['platform_categories', 'platforms', 'platform_scores', 'company_information', 'accounts', 'credentials', 'submissions',
   'backlinks', 'backlink_history', 'email_verifications', 'automation_tasks', 'human_approvals', 'platform_transitions', 'emails_used',
-  'platform_playbooks', 'screenshots', 'activity_logs', 'system_settings']
-const KEY = { system_settings: 'key', platform_playbooks: 'platform_id' }
+  'platform_playbooks', 'screenshots', 'activity_logs', 'system_settings', 'gtm_leads', 'gtm_emails', 'gtm_outreach']
+const KEY = { system_settings: 'key', platform_playbooks: 'platform_id', gtm_leads: 'key', gtm_emails: 'n', gtm_outreach: 'n' }
 const ACTIVITY_ROWS = 500
 const LOCAL_ONLY_SETTINGS = new Set(['automation_state', 'repair_v2_done']) // the agent's run state travels as status
 const PUSH_MS = 5_000
@@ -36,7 +36,9 @@ const RESEND_MS = 3 * 60_000 // a command handed out but never answered is hande
 const keyOf = t => KEY[t] || 'id'
 const rowHash = r => createHash('sha1').update(JSON.stringify(r)).digest('base64url')
 
+const hasTable = (db, t) => Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(t))
 function tableRows(db, t) {
+  if (t.startsWith('gtm_') && !hasTable(db, t)) return [] // created by the Growth section; absent in bare copies
   if (t === 'activity_logs') return db.prepare(`SELECT * FROM activity_logs ORDER BY id DESC LIMIT ${ACTIVITY_ROWS}`).all().reverse()
   // Which accounts have a password, never the password: the sealed value stays with the agent.
   if (t === 'credentials') return db.prepare('SELECT id, account_id, created_at, revealed_at FROM credentials').all().map(r => ({ ...r, secret_enc: '' }))
@@ -86,7 +88,7 @@ export function applySnapshot(db, snap) {
     db.pragma('defer_foreign_keys = ON')
     for (const t of [...MIRROR_TABLES].reverse()) {
       if (t === 'system_settings') db.prepare(`DELETE FROM system_settings WHERE key NOT IN (${[...LOCAL_ONLY_SETTINGS].map(() => '?').join(',')}) AND key NOT LIKE 'mirror_%'`).run(...LOCAL_ONLY_SETTINGS)
-      else db.prepare(`DELETE FROM ${t}`).run()
+      else if (hasTable(db, t)) db.prepare(`DELETE FROM ${t}`).run()
     }
     for (const t of MIRROR_TABLES) insertRows(db, t, snap[t] || [])
     setSetting(db, 'automation_state', 'stopped') // while it mirrors, the hosted copy runs nothing itself
@@ -101,9 +103,9 @@ export function applyDelta(db, delta) {
   db.transaction(() => {
     db.pragma('defer_foreign_keys = ON')
     for (const t of [...MIRROR_TABLES].reverse()) {
-      for (const key of delta[t]?.delete || []) {
+      for (const key of hasTable(db, t) ? delta[t]?.delete || [] : []) {
         if (t === 'system_settings' && skipSetting({ key })) continue
-        db.prepare(`DELETE FROM ${t} WHERE ${keyOf(t)} = ?`).run(t === 'system_settings' ? key : Number(key))
+        db.prepare(`DELETE FROM ${t} WHERE ${keyOf(t)} = ?`).run(t === 'system_settings' || !/^\d+$/.test(key) ? key : Number(key))
       }
     }
     for (const t of MIRROR_TABLES) {
@@ -120,7 +122,7 @@ export function applyDelta(db, delta) {
 }
 
 function insertRows(db, t, rows, replace = false) {
-  if (!rows.length) return
+  if (!rows.length || !hasTable(db, t)) return
   const known = columnsOf(db, t)
   for (let row of rows) {
     if (t === 'system_settings' && skipSetting(row)) continue

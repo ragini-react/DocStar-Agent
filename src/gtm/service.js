@@ -28,6 +28,13 @@ export function createGtm({ db, root }) {
   db.exec(`CREATE TABLE IF NOT EXISTS gtm_leads (
     key TEXT PRIMARY KEY, data TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'researched',
     notes TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`)
+  // Outreach emails (ready to send) and what was sent. Rows are written by the local outreach module and mirrored to
+  // the hosted dashboard; the files they come from (gtm/email-drafts.md, gtm/leads/) are never in Git.
+  db.exec(`CREATE TABLE IF NOT EXISTS gtm_emails (n INTEGER PRIMARY KEY, company TEXT NOT NULL, to_email TEXT NOT NULL,
+    subject TEXT NOT NULL, body TEXT NOT NULL, icp TEXT, prepared INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL)`)
+  db.exec(`CREATE TABLE IF NOT EXISTS gtm_outreach (n INTEGER NOT NULL, kind TEXT NOT NULL, to_email TEXT NOT NULL, subject TEXT NOT NULL,
+    message_id TEXT, thread_id TEXT, sent_at TEXT NOT NULL, PRIMARY KEY (n, kind))`)
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS gtm_outreach_n ON gtm_outreach (n)') // one first email per draft; the mirror upserts on n
 
   // New leads are added; research fields of known leads are refreshed; status and notes are never overwritten.
   function importLeads() {
@@ -93,6 +100,10 @@ export function createGtm({ db, root }) {
 
   return {
     importLeads, leads, update, summary, statuses: LEAD_STATUSES,
+    /** Every outreach email with its sent record (null while it is ready to send). */
+    outreachEmails: () => db.prepare(`SELECT e.*, o.sent_at, o.message_id FROM gtm_emails e LEFT JOIN gtm_outreach o ON o.n = e.n AND o.kind = 'first' ORDER BY e.n`).all()
+      .map(r => ({ n: r.n, company: r.company, to: r.to_email, subject: r.subject, body: r.body, icp: r.icp, prepared: Boolean(r.prepared),
+        sent: r.sent_at ? { sent_at: r.sent_at, message_id: r.message_id } : null })),
     icps: () => readJson(path.join(dir, 'icps.json')) || [],
     channels: () => readJson(path.join(dir, 'channels.json')) || [],
     doc: name => (['email-drafts', 'messaging', 'email-templates', 'strategy'].includes(name) ? doc(name) : ''),
