@@ -573,6 +573,8 @@ loaders.growth = async () => {
   $('#gtm-icp-n').textContent = icps.length
   $('#gtm-icps').innerHTML = icps.map(i => `<tr><td>${i.tier}</td><td><strong>${esc(i.name)}</strong><div class="muted small">${esc(i.who)}</div></td><td>${esc(i.segment)}</td><td class="small">${esc(i.pain)}</td><td class="small">${esc(i.docstar_fit)}</td><td class="small">${esc(i.buyer)}</td></tr>`).join('')
   gtmLeads = ld.leads; gtmStatuses = ld.statuses; renderGtmLeads()
+  // The Outreach page exists only where sending is set up (the local copy); hidden elsewhere.
+  try { const o = await fetch('/api/outreach', { credentials: 'same-origin' }); $('#gtm-outreach-bar').hidden = !o.ok } catch { $('#gtm-outreach-bar').hidden = true }
   $('#gtm-channels').innerHTML = ch.map(c => `<tr><td><a href="${esc(c.url)}" target="_blank" rel="noopener">${esc(c.name)}</a></td><td>${esc(c.type)}</td><td class="small">${esc(c.why_relevant)}</td><td class="small">${esc(c.how_to_engage)}</td><td>${esc(c.effort)}</td></tr>`).join('')
 }
 for (const id of ['#gtm-q', '#gtm-fseg', '#gtm-fpri']) $(id).addEventListener('input', renderGtmLeads)
