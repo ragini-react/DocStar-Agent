@@ -17,6 +17,9 @@ import { toCsv } from '../platforms/service.js'
 import { resolveFinalUrl } from '../platforms/domains.js'
 import { actionPage, esc } from '../alerts/notify.js'
 import { createGtm } from '../gtm/service.js'
+// Local-only extension (git-ignored): loaded when present and GTM_OUTREACH=1, never on the hosted copy.
+const OUTREACH_FILE = path.join(ROOT, 'gtm', 'outreach.js')
+const localOutreach = process.env.GTM_OUTREACH === '1' && existsSync(OUTREACH_FILE) ? await import(OUTREACH_FILE) : null
 import { BRAND, BRAND_SLUG, SITE_HOST, SITE_URL, SUPPORT_EMAIL, fillBrand, isSiteUrl } from '../agent/brand.js'
 
 const SESSION_MS = 12 * 3600_000 // absolute limit
@@ -524,6 +527,7 @@ export function createApp({ config, db, vault, activity, gmail, chrome, orchestr
     try { gtm.update(req.params.key, req.body || {}); res.json({ ok: true }) } catch (e) { res.status(400).json({ error: e.message }) }
   })
   app.get('/api/health', (req, res) => res.json({ ok: true, db: db.prepare('SELECT 1 ok').get().ok === 1 }))
+  if (localOutreach && !config.hosted) localOutreach.register(app, { db, gmail, gtm, activity, root: ROOT })
   app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }))
 
   // The browser half of viaSocket Connect, served from the installed package.

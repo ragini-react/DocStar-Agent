@@ -33,8 +33,18 @@ export function createGmail({ db, vault, activity, viasocket, config }) {
 
   return {
     serviceId: () => serviceIdFor(config.gmail.slug),
-    // The action ids Connect asks consent for: nothing beyond reading mail.
-    consentActions: () => [config.gmail.searchAction.id, config.gmail.getMessageAction.id],
+    // The action ids Connect asks consent for: reading mail, plus sending only where outreach is switched on (local).
+    consentActions: () => [config.gmail.searchAction.id, config.gmail.getMessageAction.id,
+      ...(process.env.GTM_OUTREACH === '1' ? [config.gmail.sendAction.id] : [])],
+    sendEnabled: () => process.env.GTM_OUTREACH === '1',
+
+    /** Sends one plain-text email from the connected account. Refused unless GTM_OUTREACH=1. Returns ids only. */
+    async sendEmail({ to, subject, body, fromName }) {
+      if (process.env.GTM_OUTREACH !== '1') throw new Error('Sending is not enabled here')
+      const res = await runAction(config.gmail.sendAction, { to, subject, messageBody: body, ...(fromName ? { fromName } : {}) })
+      const out = res?.data ?? res
+      return { id: out?.id ?? null, threadId: out?.threadId ?? null }
+    },
     embedToken: () => user().token(),
 
     /** Called after the dashboard's Connect popup returns an auth_id. Trusts nothing from the browser. */
