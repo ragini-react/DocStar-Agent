@@ -130,6 +130,7 @@ const TITLES = { overview: 'Overview', 'activity-list': 'Status board', platform
   integrations: 'Integrations', credentials: 'Credentials', settings: 'Settings', health: 'Health' }
 const loaders = {}
 let pendingActivityPlatform = null
+let pendingCategory = ''
 const currentView = () => { const v = location.hash.slice(1).split('?')[0] || 'overview'; return TITLES[v] ? v : 'overview' }
 const hashParams = () => new URLSearchParams(location.hash.split('?')[1] || '')
 function route() {
@@ -142,6 +143,9 @@ function route() {
     const p = hashParams()
     $('#f-group').value = p.get('group') || ''
     $('#f-status').value = p.get('status') || ''
+    $('#f-pricing').value = p.get('pricing') || ''
+    pendingCategory = p.get('category') || ''
+    if (categoriesLoaded) $('#f-category').value = pendingCategory
     page = 0
   }
   run(loaders[name] || (async () => {}))()
@@ -185,13 +189,13 @@ for (const b of $$('[data-automation]')) {
 // ---------- overview ----------
 // Each card opens the list its number counts.
 const KPIS = [
-  ['discovered', 'Platforms discovered', '', '#platforms'], ['qualified', 'Qualified', '', '#platforms'], ['freeSelected', 'Free platforms selected'],
+  ['discovered', 'Platforms discovered', '', '#platforms'], ['qualified', 'Qualified', '', '#platforms'], ['freeSelected', 'Free platforms selected', '', '#platforms?pricing=free'],
   ['paidSkipped', 'Paid, skipped', '', '#platforms?status=paid_skipped'], ['registered', 'Accounts registered', '', '#credentials'],
   ['inProgress', 'In progress', '', '#platforms?group=in_progress'], ['awaitingYou', 'Awaiting your approval', 'alert', '#queue'],
   ['approvedWaiting', 'Approved, not yet submitted', '', '#platforms?group=pipeline'],
   ['submitted', 'Submitted in total (listed + awaiting review)', '', '#added'], ['successfullyAdded', 'Successfully added (public listing)', 'accent', '#added'],
   ['pendingPlatformApproval', 'Submitted, awaiting platform review', '', '#added'], ['liveBacklinks', 'Live backlinks', 'accent', '#platforms?status=live_backlink'],
-  ['dofollow', 'Dofollow', 'accent'], ['nofollow', 'Nofollow'], ['lost', 'Backlinks lost', 'alert', '#platforms?status=backlink_lost'],
+  ['dofollow', 'Dofollow', 'accent', '#added'], ['nofollow', 'Nofollow', '', '#added'], ['lost', 'Backlinks lost', 'alert', '#platforms?status=backlink_lost'],
   ['failed', 'Failed', 'alert', '#failed'], ['needsYou', 'Needs you', 'alert', '#queue']
 ]
 function bars(el, rows) {
@@ -206,7 +210,7 @@ loaders.overview = async () => {
   $('#kpis').innerHTML = KPIS.map(([k, l, cls, href]) => `<div class="kpi ${o[k] && cls ? cls : ''} ${href ? 'link' : ''}" ${href ? `data-href="${href}" role="link" tabindex="0"` : ''}>
     <div class="label">${l}</div><div class="value">${o[k] ?? 0}</div>${k === 'registered' && o.signupsStarted > o.registered ? `<div class="muted small">${o.signupsStarted - o.registered} started, not finished</div>` : ''}</div>`).join('')
   bars($('#by-status'), Object.entries(o.byStatus).map(([s, n]) => ({ name: label(s), n, href: `#platforms?status=${s}` })).sort((a, b) => b.n - a.n))
-  bars($('#by-category'), o.byCategory.map(r => ({ name: r.name, n: r.n })))
+  bars($('#by-category'), o.byCategory.map(r => ({ name: r.name, n: r.n, href: r.slug ? `#platforms?category=${encodeURIComponent(r.slug)}` : null })))
   renderFeed($('#overview-activity'), await api('/api/activity?limit=8'))
   await loadActivitySummary()
 }
@@ -344,6 +348,7 @@ loaders.platforms = async () => {
     $('#f-category').insertAdjacentHTML('beforeend', opts)
     $('#add-category').insertAdjacentHTML('beforeend', opts)
     categoriesLoaded = true
+    $('#f-category').value = pendingCategory
   }
   const qs = platformQuery()
   qs.set('limit', PAGE); qs.set('offset', page * PAGE)
@@ -525,11 +530,32 @@ const GTM_KPIS = [['icpCount', 'ICP categories'], ['researched', 'Companies rese
   ['highPriority', 'High priority'], ['outreachReady', 'Outreach ready'], ['sent', 'Emails sent'], ['replied', 'Replies'],
   ['interested', 'Interested'], ['demos', 'Demo requests'], ['signups', 'Sign-ups'], ['converted', 'Converted users']]
 let gtmLeads = [], gtmStatuses = []
-const gtmBars = (el, obj) => { el.innerHTML = Object.entries(obj).sort((a, b) => b[1] - a[1]).map(([k, n]) => `<div class="small"><strong>${esc(k)}</strong>: ${n}</div>`).join('') || '<p class="muted small">No leads yet</p>' }
+const gtmBars = (el, obj, field) => { el.innerHTML = Object.entries(obj).sort((a, b) => b[1] - a[1]).map(([k, n]) => `<div class="small gtm-bar" role="link" tabindex="0" data-field="${field}" data-value="${esc(k)}" style="cursor:pointer"><strong>${esc(k)}</strong>: ${n} <span class="muted">→ view</span></div>`).join('') || '<p class="muted small">No leads yet</p>' }
+// Each Growth tile opens the matching leads (same rules as the counts in src/gtm/service.js).
+const GTM_REACHED = { sent: ['sent', 'replied', 'interested', 'demo_requested', 'signed_up', 'converted', 'not_interested'],
+  replied: ['replied', 'interested', 'demo_requested', 'signed_up', 'converted', 'not_interested'],
+  interested: ['interested', 'demo_requested', 'signed_up', 'converted'], demo_requested: ['demo_requested'],
+  signed_up: ['signed_up', 'converted'], converted: ['converted'] }
+const GTM_FILTERS = {
+  researched: () => true, qualified: l => l.priority === 'High' || l.priority === 'Medium',
+  verifiedEmails: l => l.email_status === 'published-personal', genericEmails: l => l.email_status === 'generic-published',
+  noContact: l => !l.email, highPriority: l => l.priority === 'High', outreachReady: l => l.status === 'outreach_ready',
+  sent: l => GTM_REACHED.sent.includes(l.status), replied: l => GTM_REACHED.replied.includes(l.status),
+  interested: l => GTM_REACHED.interested.includes(l.status), demos: l => GTM_REACHED.demo_requested.includes(l.status),
+  signups: l => GTM_REACHED.signed_up.includes(l.status), converted: l => GTM_REACHED.converted.includes(l.status) }
+let gtmFilter = null
+function setGtmFilter(key) {
+  gtmFilter = key
+  if (key === 'icpCount') { gtmFilter = null; renderGtmLeads(); return $('#gtm-icps').closest('.card').scrollIntoView({ behavior: 'smooth' }) }
+  renderGtmLeads(); $('#gtm-leads').closest('.card').scrollIntoView({ behavior: 'smooth' })
+}
 function renderGtmLeads() {
   const q = $('#gtm-q').value.toLowerCase(), seg = $('#gtm-fseg').value, pri = $('#gtm-fpri').value
-  const rows = gtmLeads.filter(l => (!seg || l.segment === seg) && (!pri || l.priority === pri) && (!q || JSON.stringify(l).toLowerCase().includes(q)))
+  const f = gtmFilter && GTM_FILTERS[gtmFilter]
+  const rows = gtmLeads.filter(l => (!f || f(l)) && (!seg || l.segment === seg) && (!pri || l.priority === pri) && (!q || JSON.stringify(l).toLowerCase().includes(q)))
   $('#gtm-lead-n').textContent = rows.length
+  const label = gtmFilter && GTM_KPIS.find(([k]) => k === gtmFilter)?.[1]
+  $('#gtm-filter').innerHTML = label ? `Showing: <strong>${esc(label)}</strong> (${rows.length}) · <a href="#growth" id="gtm-clear">Show all</a>` : ''
   $('#gtm-leads').innerHTML = rows.map(l => `<tr>
     <td><a href="${esc(l.website)}" target="_blank" rel="noopener">${esc(l.name)}</a><div class="muted small">${esc(l.industry)} · ${esc(l.size_stage)}</div></td>
     <td class="small">${esc(l.icp)}<div class="muted">Seg ${esc(l.segment)}</div></td>
@@ -537,18 +563,29 @@ function renderGtmLeads() {
     <td class="small">${esc(l.contact_name || '—')}<div class="muted">${esc(l.contact_title || '')}</div>${l.email ? `<div>${esc(l.email)} <span class="pill ${l.email_status === 'published-personal' ? 'ok' : 'info'}">${esc(l.email_status)}</span></div>` : '<div class="muted">no published email</div>'}${l.profile_url ? `<a href="${esc(l.profile_url)}" target="_blank" rel="noopener">profile</a>` : ''}</td>
     <td class="small">${esc(l.outreach_angle)}<div class="muted">Pain: ${esc(l.pain_points)}</div></td>
     <td><span class="pill ${l.priority === 'High' ? 'ok' : l.priority === 'Medium' ? 'info' : ''}">${esc(l.priority)}</span></td>
-    <td><select data-gtm-key="${esc(l.key)}">${gtmStatuses.map(([k, lab]) => `<option value="${k}" ${k === l.status ? 'selected' : ''}>${esc(lab)}</option>`).join('')}</select></td></tr>`).join('')
+    <td><select data-gtm-key="${esc(l.key)}">${gtmStatuses.map(([k, lab]) => `<option value="${k}" ${k === l.status ? 'selected' : ''}>${esc(lab)}</option>`).join('')}</select>${l.notes ? `<div class="muted small">${esc(l.notes.replace(/(\d{4}-\d\d-\d\dT[\d:.]+Z)/, m => new Date(m).toLocaleString()))}</div>` : ''}</td></tr>`).join('')
+  if (!rows.length) $('#gtm-leads').innerHTML = '<tr><td colspan="7" class="muted">No leads in this list yet.</td></tr>'
 }
 loaders.growth = async () => {
   const [s, icps, ld, ch] = await Promise.all([api('/api/gtm/summary'), api('/api/gtm/icps'), api('/api/gtm/leads'), api('/api/gtm/channels')])
-  $('#gtm-kpis').innerHTML = GTM_KPIS.map(([k, l]) => `<div class="kpi"><div class="label">${l}</div><div class="value">${s[k] ?? 0}</div></div>`).join('')
-  gtmBars($('#gtm-seg'), s.bySegment); gtmBars($('#gtm-pri'), s.byPriority)
+  $('#gtm-kpis').innerHTML = GTM_KPIS.map(([k, l]) => `<div class="kpi link" data-gtm-filter="${k}" role="link" tabindex="0" title="View the list"><div class="label">${l}</div><div class="value">${s[k] ?? 0}</div></div>`).join('')
+  gtmBars($('#gtm-seg'), s.bySegment, 'segment'); gtmBars($('#gtm-pri'), s.byPriority, 'priority')
   $('#gtm-icp-n').textContent = icps.length
   $('#gtm-icps').innerHTML = icps.map(i => `<tr><td>${i.tier}</td><td><strong>${esc(i.name)}</strong><div class="muted small">${esc(i.who)}</div></td><td>${esc(i.segment)}</td><td class="small">${esc(i.pain)}</td><td class="small">${esc(i.docstar_fit)}</td><td class="small">${esc(i.buyer)}</td></tr>`).join('')
   gtmLeads = ld.leads; gtmStatuses = ld.statuses; renderGtmLeads()
   $('#gtm-channels').innerHTML = ch.map(c => `<tr><td><a href="${esc(c.url)}" target="_blank" rel="noopener">${esc(c.name)}</a></td><td>${esc(c.type)}</td><td class="small">${esc(c.why_relevant)}</td><td class="small">${esc(c.how_to_engage)}</td><td>${esc(c.effort)}</td></tr>`).join('')
 }
 for (const id of ['#gtm-q', '#gtm-fseg', '#gtm-fpri']) $(id).addEventListener('input', renderGtmLeads)
+const gtmActivate = e => {
+  const k = e.target.closest('[data-gtm-filter]'); if (k) return setGtmFilter(k.dataset.gtmFilter)
+  const b = e.target.closest('.gtm-bar'); if (!b) return
+  gtmFilter = null; $(b.dataset.field === 'segment' ? '#gtm-fseg' : '#gtm-fpri').value = b.dataset.value; setGtmFilter(null)
+}
+for (const id of ['#gtm-kpis', '#gtm-seg', '#gtm-pri']) {
+  $(id).addEventListener('click', gtmActivate)
+  $(id).addEventListener('keydown', e => { if (e.key === 'Enter') gtmActivate(e) })
+}
+$('#gtm-filter').addEventListener('click', e => { if (e.target.id !== 'gtm-clear') return; e.preventDefault(); gtmFilter = null; $('#gtm-fseg').value = ''; $('#gtm-fpri').value = ''; renderGtmLeads() })
 $('#gtm-leads').addEventListener('change', run(async e => {
   const key = e.target.dataset.gtmKey; if (!key) return
   await api(`/api/gtm/leads/${encodeURIComponent(key)}`, { method: 'PATCH', body: { status: e.target.value } })
