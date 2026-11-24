@@ -7,10 +7,15 @@ import { serviceIdFor } from './viasocket.js'
 import { pickVerificationLink, senderDomain } from './verificationLinks.js'
 import { BRAND } from '../agent/brand.js'
 
-const KEY = 'gmail'
 const STATUS_TTL_MS = 60_000
 
-export function createGmail({ db, vault, activity, viasocket, config }) {
+/**
+ * One Gmail connection. `key` names it: 'gmail' is the agent's own inbox (support@, verification mail); each cold-email
+ * sending inbox has its own key ('gmail_inbox_<id>'), so outreach never sends from or disturbs the support inbox.
+ * `sender: true` asks Connect for send consent too (still refused unless GTM_OUTREACH=1).
+ */
+export function createGmail({ db, vault, activity, viasocket, config, key = 'gmail', label = 'Gmail', sender = false }) {
+  const KEY = key
   const user = () => viasocket.user(config.operatorUserId) // created on use: a copy without keys still starts
   let statusCache = null
 
@@ -35,7 +40,7 @@ export function createGmail({ db, vault, activity, viasocket, config }) {
     serviceId: () => serviceIdFor(config.gmail.slug),
     // The action ids Connect asks consent for: reading mail, plus sending only where outreach is switched on (local).
     consentActions: () => [config.gmail.searchAction.id, config.gmail.getMessageAction.id,
-      ...(process.env.GTM_OUTREACH === '1' ? [config.gmail.sendAction.id] : [])],
+      ...(process.env.GTM_OUTREACH === '1' || sender ? [config.gmail.sendAction.id] : [])],
     sendEnabled: () => process.env.GTM_OUTREACH === '1',
 
     /** Sends one email (HTML when the body has tags) from the connected account. Refused unless GTM_OUTREACH=1. Returns ids only. */
@@ -64,12 +69,15 @@ export function createGmail({ db, vault, activity, viasocket, config }) {
       const own = flows.find(f => f.authId === authId)
       if (own?.status === 'paused') await user().setFlowStatus(own.id, 1)
       const scriptId = own?.id ?? (await user().enable(serviceId, authId)).scriptId
-      for (const f of flows) if (f.id !== scriptId && f.status === 'active') await user().disableFlow(f.id) // paused, not deleted
+      // Older flows of THIS connection are paused (not deleted); flows that another inbox runs on are left alone.
+      const others = new Set(db.prepare("SELECT key, value_enc FROM integration_settings WHERE key LIKE 'gmail%' AND key != ?").all(KEY)
+        .map(r => { try { return JSON.parse(vault.decrypt(r.value_enc)).scriptId } catch { return null } }).filter(Boolean))
+      for (const f of flows) if (f.id !== scriptId && f.status === 'active' && !others.has(f.id)) await user().disableFlow(f.id)
       let account = null
       try { account = JSON.parse(match.connection_label || '{}').Email ?? null } catch {}
       write({ authId, scriptId }, { account, connectedAt: now(), isExpired: Boolean(match.isExpired) })
       statusCache = null
-      activity.success('gmail_connected', `Gmail connected${account ? ` as ${account}` : ''}`)
+      activity.success('gmail_connected', `${label} connected${account ? ` as ${account}` : ''}`)
       return this.status({ fresh: true })
     },
 
@@ -96,7 +104,7 @@ export function createGmail({ db, vault, activity, viasocket, config }) {
     disconnect() {
       db.prepare('DELETE FROM integration_settings WHERE key = ?').run(KEY)
       statusCache = null
-      activity.warn('gmail_disconnected', `Gmail connection removed from ${BRAND} (the connection itself stays in viaSocket)`)
+      activity.warn('gmail_disconnected', `${label} connection removed from ${BRAND} (the connection itself stays in viaSocket)`)
     },
 
     /** Read-only check: one search for Google's own account mail. Returns counts and a date, never content. */

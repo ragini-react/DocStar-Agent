@@ -1,14 +1,28 @@
 <!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>DocStar Outreach</title><style>
-body{font:14px/1.5 system-ui,sans-serif;max-width:900px;margin:0 auto;padding:16px;background:#fafafa;color:#222}
+body{font:14px/1.5 system-ui,sans-serif;max-width:1040px;margin:0 auto;padding:16px;background:#fafafa;color:#222}
 .card{background:#fff;border:1px solid #ddd;border-radius:8px;padding:14px 16px;margin:12px 0}
 pre{white-space:pre-wrap;font:13px/1.5 system-ui,sans-serif;background:#f6f6f6;padding:10px;border-radius:6px}
-button{padding:6px 12px;border-radius:6px;border:1px solid #888;background:#fff;cursor:pointer}
-button.done{background:#1a7f37;color:#fff;border-color:#1a7f37;opacity:1;cursor:default}button.primary{background:#1a7f37;color:#fff;border-color:#1a7f37}
-.muted{color:#666}.warn{background:#fff6dd;border-color:#e5c45a}.tag{display:inline-block;font-size:12px;background:#eef3ff;color:#2a4a9a;border-radius:10px;padding:1px 8px;margin-left:6px}
+button{padding:6px 12px;border-radius:6px;border:1px solid #888;background:#fff;cursor:pointer}button:disabled{opacity:.5;cursor:default}
+button.primary{background:#1a7f37;color:#fff;border-color:#1a7f37}button.danger{color:#a3302a;border-color:#a3302a}
+.muted{color:#666}.small{font-size:12px}.warn{background:#fff6dd;border-color:#e5c45a}.err{background:#fdecea;border-color:#e0a39e}
+.tag{display:inline-block;font-size:12px;background:#eef3ff;color:#2a4a9a;border-radius:10px;padding:1px 8px;margin-left:6px}
+.pill{display:inline-block;font-size:12px;border-radius:10px;padding:1px 8px;background:#eee}.pill.ok{background:#e3f6e8;color:#1a7f37}.pill.bad{background:#fdecea;color:#a3302a}.pill.mid{background:#fff6dd;color:#7a5b00}
+table{border-collapse:collapse;width:100%}td,th{text-align:left;padding:6px 8px;border-top:1px solid #eee;vertical-align:top}th{font-weight:600;font-size:12px;color:#555}
+input[type=number]{width:64px}input,select{padding:4px 6px;border:1px solid #bbb;border-radius:5px;font:inherit}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:8px 16px}
+label.f{display:flex;flex-direction:column;font-size:12px;color:#555;gap:2px}h2{margin-top:28px}.scroll{overflow-x:auto}
 </style></head><body>
 <p><a href="/#growth">← Back to Growth: ICP &amp; leads</a></p><h1>Outreach</h1>
-<div class="card warn">Nothing sends automatically. An email goes only when you click <b>Send</b> and confirm, straight to that company, from support@docstar.io on the Mac running the agent.</div>
+<div class="card warn">Emails go out only after you approve them in a batch (up to 30). They're sent from separate sending inboxes, never from support@,
+within each inbox's hourly and daily limits, 2–6 minutes apart, during the recipient's business hours, with at most 2 follow-ups. Replies stop follow-ups.
+Opt-outs, bounces and complaints are suppressed automatically, and an inbox pauses itself if bounces or complaints rise.</div>
 <p id="hdr" class="muted"></p>
-<div id="list">Loading…</div>
-<script src="/outreach-page.js"></script></body></html>
+<div id="alerts"></div>
+<h2>Sending inboxes</h2><div id="inboxes" class="card">Loading…</div>
+<h2>Ready to approve</h2><div id="ready">Loading…</div>
+<h2>Queue</h2><div id="queue" class="card scroll">Loading…</div>
+<h2>Sending rules</h2><div id="settings" class="card">Loading…</div>
+<h2>Suppression list</h2><div id="suppression" class="card">Loading…</div>
+<h2>Monitor</h2><div id="events" class="card scroll">Loading…</div>
+<script type="module" src="/outreach-page.js"></script></body></html>

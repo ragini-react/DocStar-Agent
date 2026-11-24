@@ -17,12 +17,14 @@ import { hostname } from 'node:os'
 import { getSetting, now, numSetting, setSetting } from '../db/index.js'
 import { maskError } from '../security/mask.js'
 import { BRAND } from '../agent/brand.js'
+import { OUTREACH_KEYS, OUTREACH_TABLES } from '../outreach/store.js'
 
 // Parents before children; deleted in reverse.
 export const MIRROR_TABLES = ['platform_categories', 'platforms', 'platform_scores', 'company_information', 'accounts', 'credentials', 'submissions',
   'backlinks', 'backlink_history', 'email_verifications', 'automation_tasks', 'human_approvals', 'platform_transitions', 'emails_used',
-  'platform_playbooks', 'screenshots', 'activity_logs', 'system_settings', 'gtm_leads', 'gtm_emails', 'gtm_outreach']
-const KEY = { system_settings: 'key', platform_playbooks: 'platform_id', gtm_leads: 'key', gtm_emails: 'n', gtm_outreach: 'n' }
+  'platform_playbooks', 'screenshots', 'activity_logs', 'system_settings', 'gtm_leads', 'gtm_emails', 'gtm_outreach',
+  ...OUTREACH_TABLES]
+const KEY = { system_settings: 'key', platform_playbooks: 'platform_id', gtm_leads: 'key', gtm_emails: 'n', gtm_outreach: 'n', ...OUTREACH_KEYS }
 const ACTIVITY_ROWS = 500
 const LOCAL_ONLY_SETTINGS = new Set(['automation_state', 'repair_v2_done']) // the agent's run state travels as status
 const PUSH_MS = 5_000
@@ -38,7 +40,7 @@ const rowHash = r => createHash('sha1').update(JSON.stringify(r)).digest('base64
 
 const hasTable = (db, t) => Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(t))
 function tableRows(db, t) {
-  if (t.startsWith('gtm_') && !hasTable(db, t)) return [] // created by the Growth section; absent in bare copies
+  if ((t.startsWith('gtm_') || t.startsWith('outreach_')) && !hasTable(db, t)) return [] // created by the Growth section; absent in bare copies
   if (t === 'activity_logs') return db.prepare(`SELECT * FROM activity_logs ORDER BY id DESC LIMIT ${ACTIVITY_ROWS}`).all().reverse()
   // Which accounts have a password, never the password: the sealed value stays with the agent.
   if (t === 'credentials') return db.prepare('SELECT id, account_id, created_at, revealed_at FROM credentials').all().map(r => ({ ...r, secret_enc: '' }))
