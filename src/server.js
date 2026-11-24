@@ -65,7 +65,7 @@ if (!config.hosted) {
 const mirrorReceiver = config.hosted && config.mirror.receiveToken ? createMirrorReceiver({ db, activity, token: config.mirror.receiveToken, alerts }) : null
 mirrorReceiver?.startWatch()
 let mirrorPusher = null
-const app = createApp({ config, db, vault, activity, gmail, chrome, orchestrator, platforms, agent, status, views, maintenance, manual, alerts, tokens, reports, mirror: mirrorReceiver, pusher: () => mirrorPusher, viasocket })
+const app = createApp({ config, db, vault, activity, gmail, chrome, orchestrator, platforms, agent, status, views, maintenance, manual, alerts, tokens, reports, mirror: mirrorReceiver, pusher: () => mirrorPusher })
 mirrorPusher = !config.hosted && config.mirror.url && config.mirror.token
   ? createMirrorPusher({ db, activity, chrome, gmail, orchestrator, replay: app.locals.replay, url: config.mirror.url, token: config.mirror.token, alerts })
   : null
