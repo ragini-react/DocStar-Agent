@@ -32,6 +32,8 @@ export function createGtm({ db, root }) {
   // the hosted dashboard; the files they come from (gtm/email-drafts.md, gtm/leads/) are never in Git.
   db.exec(`CREATE TABLE IF NOT EXISTS gtm_emails (n INTEGER PRIMARY KEY, company TEXT NOT NULL, to_email TEXT NOT NULL,
     subject TEXT NOT NULL, body TEXT NOT NULL, icp TEXT, prepared INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL)`)
+  // The email exactly as it goes out (rendered in the branded template on the Mac), so both dashboards preview it.
+  if (!db.prepare('PRAGMA table_info(gtm_emails)').all().some(c => c.name === 'html')) db.exec('ALTER TABLE gtm_emails ADD COLUMN html TEXT')
   db.exec(`CREATE TABLE IF NOT EXISTS gtm_outreach (n INTEGER NOT NULL, kind TEXT NOT NULL, to_email TEXT NOT NULL, subject TEXT NOT NULL,
     message_id TEXT, thread_id TEXT, sent_at TEXT NOT NULL, PRIMARY KEY (n, kind))`)
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS gtm_outreach_n ON gtm_outreach (n)') // one first email per draft; the mirror upserts on n
