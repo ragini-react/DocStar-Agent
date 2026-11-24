@@ -104,7 +104,7 @@ export function createGtm({ db, root }) {
     importLeads, leads, update, summary, statuses: LEAD_STATUSES,
     /** Every outreach email with its sent record (null while it is ready to send). */
     outreachEmails: () => db.prepare(`SELECT e.*, o.sent_at, o.message_id FROM gtm_emails e LEFT JOIN gtm_outreach o ON o.n = e.n AND o.kind = 'first' ORDER BY e.n`).all()
-      .map(r => ({ n: r.n, company: r.company, to: r.to_email, subject: r.subject, body: r.body, html: r.html || null, icp: r.icp, prepared: Boolean(r.prepared),
+      .map(r => ({ n: r.n, company: r.company, to: r.to_email, subject: r.subject, body: r.body, icp: r.icp, prepared: Boolean(r.prepared),
         sent: r.sent_at ? { sent_at: r.sent_at, message_id: r.message_id } : null })),
     icps: () => readJson(path.join(dir, 'icps.json')) || [],
     channels: () => readJson(path.join(dir, 'channels.json')) || [],

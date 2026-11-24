@@ -17,9 +17,6 @@ import { toCsv } from '../platforms/service.js'
 import { resolveFinalUrl } from '../platforms/domains.js'
 import { actionPage, esc } from '../alerts/notify.js'
 import { createGtm } from '../gtm/service.js'
-import { createOutreachStore } from '../outreach/store.js'
-import { createOutreachEngine } from '../outreach/engine.js'
-import { registerOutreachRoutes } from '../outreach/routes.js'
 // Local-only extension (git-ignored): loaded when present and GTM_OUTREACH=1, never on the hosted copy.
 const OUTREACH_FILE = path.join(ROOT, 'gtm', 'outreach.js')
 const localOutreach = process.env.GTM_OUTREACH === '1' && existsSync(OUTREACH_FILE) ? await import(OUTREACH_FILE) : null
@@ -29,7 +26,7 @@ const SESSION_MS = 12 * 3600_000 // absolute limit
 const IDLE_MS = 30 * 60_000 // signed out after 30 minutes without a request
 const COOKIE = 'docstar_session'
 
-export function createApp({ config, db, vault, activity, gmail, chrome, orchestrator, platforms, agent, status, views, maintenance, manual, alerts = null, tokens = null, reports = null, mirror = null, pusher = () => null, viasocket = null }) {
+export function createApp({ config, db, vault, activity, gmail, chrome, orchestrator, platforms, agent, status, views, maintenance, manual, alerts = null, tokens = null, reports = null, mirror = null, pusher = () => null }) {
   const app = express()
   const sessions = new Map() // token -> { exp, seen }; in memory, so a restart signs everyone out
   const loginAttempts = new Map() // ip -> [timestamps]
@@ -542,18 +539,7 @@ export function createApp({ config, db, vault, activity, gmail, chrome, orchestr
     res.json(JSON.parse(getSetting(db, 'gtm_find_job', 'null') || 'null') || { running: false, log: [] })
   })
   app.get('/outreach', (req, res, next) => (outreachOn() ? res.sendFile(path.join(ROOT, 'public', 'outreach.html')) : next()))
-  // Cold-email sending (src/outreach): tables on both copies; the sender itself only on the Mac.
-  const outreachStore = createOutreachStore(db)
-  let outreachEngine = null
-  const { gmailFor } = registerOutreachRoutes(app, { db, vault, activity, viasocket, config, store: outreachStore, engine: () => outreachEngine, outreachOn })
-  if (localOutreach && !config.hosted) {
-    const hooks = localOutreach.register(app, { db, gmail, gtm, activity, root: ROOT, config })
-    if (hooks?.render && viasocket) {
-      outreachEngine = createOutreachEngine({ db, store: outreachStore, activity, gmailFor, ...hooks })
-      outreachEngine.start()
-      app.locals.outreachEngine = outreachEngine
-    }
-  }
+  if (localOutreach && !config.hosted) localOutreach.register(app, { db, gmail, gtm, activity, root: ROOT, config })
   app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }))
 
   // The browser half of viaSocket Connect, served from the installed package.
