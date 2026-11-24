@@ -38,7 +38,7 @@ export function createGmail({ db, vault, activity, viasocket, config }) {
       ...(process.env.GTM_OUTREACH === '1' ? [config.gmail.sendAction.id] : [])],
     sendEnabled: () => process.env.GTM_OUTREACH === '1',
 
-    /** Sends one plain-text email from the connected account. Refused unless GTM_OUTREACH=1. Returns ids only. */
+    /** Sends one email (HTML when the body has tags) from the connected account. Refused unless GTM_OUTREACH=1. Returns ids only. */
     async sendEmail({ to, subject, body, fromName }) {
       if (process.env.GTM_OUTREACH !== '1') throw new Error('Sending is not enabled here')
       const res = await runAction(config.gmail.sendAction, { to, subject, messageBody: body, ...(fromName ? { fromName } : {}) })

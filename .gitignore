@@ -8,3 +8,4 @@ data/
 gtm/leads/
 gtm/email-drafts.md
 gtm/outreach.js
+gtm/emailTemplate.js

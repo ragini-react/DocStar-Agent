@@ -10,7 +10,8 @@ async function call(u, o = {}) {
 const waiting = new Map() // n → hosted command id; sends queued from the hosted dashboard, not yet reported back
 const tag = e => (e.icp ? `<span class="tag">ICP: ${esc(e.icp)}</span>` : '')
 const head = e => `<b>${esc(e.company)}</b>${tag(e)}<div>To: ${esc(e.to)}</div><div>Subject: ${esc(e.subject)}</div>`
-const body = e => `<details><summary>Show email</summary><pre>${esc(e.body)}</pre></details>`
+// The preview is the branded HTML exactly as sent (sandboxed: no scripts, links open nothing here).
+const body = e => `<details><summary>Show email</summary>${e.html ? `<iframe sandbox title="Email preview" srcdoc="${esc(e.html)}" style="width:100%;height:900px;border:1px solid #ddd;border-radius:8px;background:#fff"></iframe>` : `<pre>${esc(e.body)}</pre>`}</details>`
 async function load() {
   let d
   try { d = await call('/api/outreach') } catch (e) { document.getElementById('list').textContent = `Sign in to the dashboard first (${e.message}).`; return }
