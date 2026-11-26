@@ -591,7 +591,7 @@ async function gtmFindPoll() {
   if (j.running) gtmFindWaitUntil = 0
 }
 $('#gtm-find-btn').addEventListener('click', async () => {
-  try { const r = await api('/api/outreach/find', { method: 'POST', body: { icp: $('#gtm-find-icp').value || null, max: 5 } }); if (r?.queued) { gtmFindWaitUntil = Date.now() + 60_000; $('#gtm-find-btn').disabled = true; $('#gtm-find-btn').textContent = 'Sent to the Mac…' } } catch (e) { alert(e.message) }
+  try { const r = await api('/api/outreach/find', { method: 'POST', body: { icp: $('#gtm-find-icp').value || null, max: 10 } }); if (r?.queued) { gtmFindWaitUntil = Date.now() + 60_000; $('#gtm-find-btn').disabled = true; $('#gtm-find-btn').textContent = 'Sent to the Mac…' } } catch (e) { alert(e.message) }
   gtmFindPoll()
 })
 $('#gtm-find-stop').addEventListener('click', async () => {
