@@ -178,6 +178,9 @@ export function describeCommand(db, method, path, body = {}) {
 
 // ---------- hosted side ----------
 
+// Commands that switch something on or off: a newer one in the same group replaces older ones still waiting.
+export const switchGroup = p => (/^\/api\/automation\/(start|stop|pause|resume)$/.test(p) ? 'automation' : /^\/api\/outreach\/find(\/stop)?$/.test(p) ? 'icp-find' : null)
+
 export function createMirrorReceiver({ db, activity, token, alerts = null }) {
   db.exec(`CREATE TABLE IF NOT EXISTS mirror_commands (id INTEGER PRIMARY KEY, method TEXT NOT NULL, path TEXT NOT NULL, body TEXT,
     state TEXT NOT NULL DEFAULT 'queued', created_at TEXT NOT NULL, sent_at TEXT, dedupe_key TEXT, result TEXT, applied_at TEXT, label TEXT,
@@ -292,6 +295,18 @@ export function createMirrorReceiver({ db, activity, token, alerts = null }) {
       const existing = db.prepare(`SELECT id FROM mirror_commands WHERE dedupe_key = ? AND state IN ('queued','sent') AND created_at > ? ORDER BY id DESC LIMIT 1`)
         .get(dedupeKey, new Date(Date.now() - DEDUPE_MS).toISOString())
       if (existing) return { ...commandRow(existing.id), duplicate: true }
+      // The same click still waiting for the Mac (however old) is one command, not several replayed in a burst.
+      const waiting = db.prepare(`SELECT id FROM mirror_commands WHERE dedupe_key = ? AND state = 'queued' ORDER BY id DESC LIMIT 1`).get(dedupeKey)
+      if (waiting) return { ...commandRow(waiting.id), duplicate: true }
+      // Start/Stop/Pause/Resume, and the ICP search's Find/Stop, are switches: only the latest click counts. Older
+      // ones still waiting are dropped, so an offline Mac doesn't replay Start, Stop, Start in one millisecond.
+      const group = switchGroup(path)
+      if (group) {
+        for (const r of db.prepare(`SELECT id, path FROM mirror_commands WHERE state = 'queued'`).all().filter(r => switchGroup(r.path) === group)) {
+          db.prepare(`UPDATE mirror_commands SET state = 'failed', result = 'Replaced by a later click', applied_at = ? WHERE id = ?`).run(now(), r.id)
+          activity.feed.emit('command', commandRow(r.id))
+        }
+      }
       const label = describeCommand(db, method, path, body || {})
       // State set explicitly: a table created by an older version defaults to 'pending', which is never handed out.
       const id = db.prepare(`INSERT INTO mirror_commands (method, path, body, state, created_at, dedupe_key, label) VALUES (?, ?, ?, 'queued', ?, ?, ?) RETURNING id`)

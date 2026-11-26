@@ -113,7 +113,15 @@ export function createAgent({ db, vault, activity, chrome, gmail, orchestrator, 
   }
 
   orchestrator.hooks.onIdle = () => feedQueue() > 0 || queueDiscovery()
-  orchestrator.hooks.onStart = () => { if (!db.prepare('SELECT 1 FROM platforms LIMIT 1').get()) queueDiscovery(true) }
+  // Start runs the whole backlink pipeline: every waiting platform gets its next task (qualify, prepare, submit) and
+  // discovery of new platforms runs when it is due (always, the first time). Other modules can add to Start via onStartAlso.
+  orchestrator.hooks.onStartAlso = []
+  orchestrator.hooks.onStart = () => {
+    const queued = feedQueue()
+    const discovering = queueDiscovery(!db.prepare('SELECT 1 FROM platforms LIMIT 1').get())
+    activity.info('start_pipeline', `Start: ${queued} platform task${queued === 1 ? '' : 's'} queued${discovering ? '; looking for new platforms' : ''}`)
+    for (const fn of orchestrator.hooks.onStartAlso) { try { fn() } catch (e) { activity.warn('start_hook_failed', e.message) } }
+  }
 
   const followUp = createFollowUp({ db, activity, status, orchestrator, finder, backlinks, gmail, alerts })
   // Backlink checks, listing searches and reading the platforms' emails are read-only: they run whether or not the
