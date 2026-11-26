@@ -137,3 +137,21 @@ test('mark as done manually works on any platform: account, listing, notes, righ
   assert.equal(manual.complete(id2, { notes: 'done by hand' }).status, 'submitted')
   assert.throws(() => manual.complete(id2, { listingUrl: 'javascript:alert(1)' }), /http/)
 })
+
+test('a newer Start/Stop or Find click replaces older ones still waiting; repeated clicks stay one command', () => {
+  const hosted = setup()
+  const receiver = createMirrorReceiver({ db: hosted.db, activity: hosted.activity, token: 't' })
+  const start = receiver.queue('POST', '/api/automation/start', {})
+  const stop = receiver.queue('POST', '/api/automation/stop', {})
+  const find = receiver.queue('POST', '/api/outreach/find', { icp: 'mcp' })
+  const resume1 = receiver.queue('POST', '/api/platforms/15/resume', {})
+  hosted.db.prepare('UPDATE mirror_commands SET created_at = ? WHERE id = ?').run('2020-01-01T00:00:00.000Z', resume1.id) // older than the 1-minute window
+  const resume2 = receiver.queue('POST', '/api/platforms/15/resume', {})
+  const state = id => hosted.db.prepare('SELECT state, result FROM mirror_commands WHERE id = ?').get(id)
+  assert.equal(state(start.id).state, 'failed')
+  assert.equal(state(start.id).result, 'Replaced by a later click')
+  assert.equal(state(stop.id).state, 'queued')
+  assert.equal(state(find.id).state, 'queued') // a different switch is untouched
+  assert.equal(resume2.id, resume1.id)
+  assert.equal(resume2.duplicate, true)
+})

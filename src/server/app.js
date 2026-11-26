@@ -539,7 +539,11 @@ export function createApp({ config, db, vault, activity, gmail, chrome, orchestr
     res.json(JSON.parse(getSetting(db, 'gtm_find_job', 'null') || 'null') || { running: false, log: [] })
   })
   app.get('/outreach', (req, res, next) => (outreachOn() ? res.sendFile(path.join(ROOT, 'public', 'outreach.html')) : next()))
-  if (localOutreach && !config.hosted) localOutreach.register(app, { db, gmail, gtm, activity, root: ROOT, config })
+  if (localOutreach && !config.hosted) {
+    const outreach = localOutreach.register(app, { db, gmail, gtm, activity, root: ROOT, config })
+    // Start also researches the next ICP and prepares its emails (nothing is sent without a click).
+    if (outreach?.startFind) orchestrator.hooks.onStartAlso?.push(() => { if (outreach.startFind(null, 10)) activity.info('start_icp', 'Start: ICP research and email preparation started') })
+  }
   app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }))
 
   // The browser half of viaSocket Connect, served from the installed package.
