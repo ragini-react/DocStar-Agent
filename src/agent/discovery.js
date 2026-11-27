@@ -18,12 +18,30 @@ export const QUERIES = [
   'software alternatives / comparison sites where anyone can add a product for free',
   'MCP server directories and registries that accept submissions',
   'open developer communities where a product or project page can be created for free',
-  'technology company directories and business profile sites with a free company profile'
+  'technology company directories and business profile sites with a free company profile',
+  // Wider net: the first ten are exhausted after a few weeks of hourly runs.
+  'awesome lists on GitHub for API tools, developer tools or MCP servers that accept pull requests',
+  'AI agent tool directories and agent marketplaces that list developer tools for free',
+  'newsletter and blog "submit your tool" pages for developer tools and AI products',
+  'product launch sites similar to Product Hunt that are free (BetaList alternatives, launch boards)',
+  'SaaS review and comparison sites with a free vendor profile for software companies',
+  'open source and developer tool listings: package registries, plugin marketplaces and integration directories',
+  'LLM and generative AI tool directories that list tools for developers',
+  'API marketplaces and API hubs where a company can list its API or developer platform for free',
+  'documentation tools and technical writing tool directories, lists and roundups that accept suggestions',
+  'regional startup directories (India, Europe, Asia) with free startup or product profiles',
+  'no-code and low-code tool directories that accept developer platform listings',
+  'Chrome extension, VS Code extension and IDE plugin directories for developer tools',
+  'developer communities where companies can publish a company page or project showcase for free',
+  'Model Context Protocol server lists, MCP marketplaces and registries for AI agents',
+  'B2B software marketplaces with free listings for SaaS companies',
+  'Indie hacker and maker communities with a free product page or showcase'
 ]
 
 const SEARCH_UNAVAILABLE = /no remaining credits|couldn.?t (complete|perform|run) the (web )?search|unable to (search|access the web)|search (service|tool) is (unavailable|not available)/i
 // Public, community-maintained lists of places to post a product (read as plain files).
-export const LIST_SOURCES = ['https://raw.githubusercontent.com/mmccaff/PlacesToPostYourStartup/master/README.md']
+export const LIST_SOURCES = ['https://raw.githubusercontent.com/mmccaff/PlacesToPostYourStartup/master/README.md',
+  'https://raw.githubusercontent.com/mezod/awesome-indie/master/README.md']
 
 /** Pure: "* Name - https://…" and "[Name](https://…)" entries of a markdown list, without subreddits. */
 export function listEntries(md) {
@@ -38,7 +56,8 @@ export function listEntries(md) {
   return out
 }
 
-const QUERY_CATEGORY = ['saas_directory', 'ai_tools', 'dev_tools', 'api_docs', 'docs_software', 'startup', 'product_listing', 'dev_tools', 'dev_tools', 'company_directory']
+const QUERY_CATEGORY = ['saas_directory', 'ai_tools', 'dev_tools', 'api_docs', 'docs_software', 'startup', 'product_listing', 'dev_tools', 'dev_tools', 'company_directory',
+  'dev_tools', 'ai_tools', 'product_listing', 'startup', 'reviews', 'dev_tools', 'ai_tools', 'api_docs', 'docs_software', 'startup', 'product_listing', 'dev_tools', 'dev_tools', 'dev_tools', 'saas_directory', 'startup']
 
 /** Pure fallback: entries of a markdown list → { name, homepage, submit_url }. */
 export function parseCandidates(text, category) {
@@ -69,8 +88,16 @@ const schema = {
 }
 
 export function createDiscovery({ db, ai, platforms, activity }) {
-  return {
-    async run({ batch = 12 } = {}) {
+  // A search that adds nothing new moves straight on to the next one (up to three per run), so a run never ends empty
+  // just because one search is exhausted.
+  async function run(opts = {}) {
+    let last
+    for (let i = 0; i < 3; i++) { last = await runOnce(opts); if (last.added.length) return last }
+    return last
+  }
+  return { run }
+
+  async function runOnce({ batch = 12 } = {}) {
       const runs = Number(db.prepare(`SELECT COUNT(*) n FROM activity_logs WHERE event = 'discovery_run'`).get().n)
       const query = QUERIES[runs % QUERIES.length]
       const known = db.prepare('SELECT domain FROM platforms').all().map(r => r.domain)
@@ -181,5 +208,4 @@ ${exclude}`,
       }
     }
     }
-  }
 }

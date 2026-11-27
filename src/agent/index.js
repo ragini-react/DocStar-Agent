@@ -17,7 +17,7 @@ import { createEmailVerifier } from '../integrations/emailVerifier.js'
 import { createFollowUp } from './followUp.js'
 import { createAutoApproval } from './autoApproval.js'
 
-const DISCOVERY_EVERY_MS = 1 * 3600_000
+const DISCOVERY_EVERY_MS = 30 * 60_000 // every 30 min while idle; each run tries up to three searches
 const BACKLINK_EVERY_MS = 10 * 60_000
 const REGISTRATION = new Set(['registering', 'registered', 'email_verification_pending'])
 
