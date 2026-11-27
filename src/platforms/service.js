@@ -46,7 +46,7 @@ const LIST_FIELDS = `p.id, p.name, p.domain, p.url, p.source, p.status, p.resume
   p.status_changed_at, p.updated_at, p.version, p.notes, c.slug AS category, c.name AS category_name,
   (SELECT overall FROM platform_scores s WHERE s.platform_id = p.id ORDER BY scored_at DESC, id DESC LIMIT 1) AS quality_score,
   a.email AS account_email, a.status AS account_status, a.login_method, a.signup_completed_at,
-  s.status AS submission_status, s.submission_url AS listing_submission_url, s.listing_url, s.manual AS manual_submission,
+  s.status AS submission_status, s.submission_url AS listing_submission_url, s.listing_url, s.extra_listing_urls, s.manual AS manual_submission,
   b.page_url AS backlink_url, b.status AS backlink_status, b.is_dofollow, b.rel AS backlink_rel, b.last_checked_at`
 const FROM = `FROM platforms p
     LEFT JOIN platform_categories c ON c.id = p.category_id
@@ -155,7 +155,7 @@ export function createPlatforms({ db, activity, status, orchestrator = null }) {
         ['Pricing', 'pricing'], ['Status', r => label(r.status)], ['Reason', r => (r.status_reason ? label(r.status_reason) : '')],
         ['Account email', 'account_email'], ['Sign-up method', r => (r.signup_completed_at ? label(r.login_method) : '')],
         ['Account status', r => (r.account_status ? label(r.account_status) : '')],
-        ['Submission status', r => (r.submission_status ? label(r.submission_status) : '')], ['Submission URL', 'listing_submission_url'], ['Listing URL', 'listing_url'],
+        ['Submission status', r => (r.submission_status ? label(r.submission_status) : '')], ['Submission URL', 'listing_submission_url'], ['Listing URL', 'listing_url'], ['Other listing URLs', r => { try { return JSON.parse(r.extra_listing_urls || '[]').join(' ') } catch { return '' } }],
         ['Backlink URL', 'backlink_url'], ['Backlink status', r => (r.backlink_status ? label(r.backlink_status) : '')], ['Dofollow', 'is_dofollow'],
         ['Last checked', 'last_checked_at'], ['Source', 'source'], ['Added', 'created_at']
       ]

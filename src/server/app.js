@@ -367,6 +367,17 @@ export function createApp({ config, db, vault, activity, gmail, chrome, orchestr
     const { check, ...r } = manual.setListingUrl(Number(req.params.id), String(req.body?.url || ''))
     res.json({ ...r, message: 'Listing URL saved; checking the backlink' })
   }))
+  // More public listing pages on the same platform (a second profile, say). Shown next to the main listing.
+  app.post('/api/platforms/:id/extra-listing-url', wrap(async (req, res) => {
+    const url = String(req.body?.url || '').trim()
+    if (!/^https:\/\/\S+$/.test(url)) return res.status(400).json({ error: 'Not a valid https URL' })
+    const s = db.prepare('SELECT id, extra_listing_urls FROM submissions WHERE platform_id = ?').get(Number(req.params.id))
+    if (!s) return res.status(400).json({ error: 'No listing recorded for this platform yet; set the main listing URL first' })
+    const list = [...new Set([...JSON.parse(s.extra_listing_urls || '[]'), url])]
+    db.prepare('UPDATE submissions SET extra_listing_urls = ?, updated_at = ? WHERE id = ?').run(JSON.stringify(list), now(), s.id)
+    activity.info('listing_added', `Extra listing URL added: ${url}`)
+    res.json({ ok: true, extra_listing_urls: list })
+  }))
   app.post('/api/platforms/:id/manual-complete', wrap(async (req, res) => {
     const b = req.body || {}
     const { check, ...r } = manual.complete(Number(req.params.id), { accountEmail: b.accountEmail, listingUrl: b.listingUrl, backlinkUrl: b.backlinkUrl, notes: b.notes, loginMethod: b.loginMethod })
@@ -538,11 +549,16 @@ export function createApp({ config, db, vault, activity, gmail, chrome, orchestr
     if (!outreachOn()) return res.status(404).json({ error: 'Not found' })
     res.json(JSON.parse(getSetting(db, 'gtm_find_job', 'null') || 'null') || { running: false, log: [] })
   })
+  app.get('/api/outreach/sender', (req, res, next) => {
+    if (!outreachOn()) return res.status(404).json({ error: 'Not found' })
+    if (localOutreach && !config.hosted) return next() // the local module answers with live numbers
+    res.json(JSON.parse(getSetting(db, 'outreach_sender', 'null') || 'null') || { auto: false, ready: 0, sentToday: 0, cap: 40 })
+  })
   app.get('/outreach', (req, res, next) => (outreachOn() ? res.sendFile(path.join(ROOT, 'public', 'outreach.html')) : next()))
   if (localOutreach && !config.hosted) {
     const outreach = localOutreach.register(app, { db, gmail, gtm, activity, root: ROOT, config })
-    // Start also researches the next ICP and prepares its emails (nothing is sent without a click).
-    if (outreach?.startFind) orchestrator.hooks.onStartAlso?.push(() => { if (outreach.startFind(null, 10)) activity.info('start_icp', 'Start: ICP research and email preparation started') })
+    // The ICP search runs only from its own button (Growth): Start runs the backlink pipeline, and the two never wait on each other.
+    void outreach
   }
   app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }))
 

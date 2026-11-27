@@ -1,6 +1,5 @@
 // ICP research and lead pipeline (Growth view). Research lives in gtm/*.json and gtm/leads/*.json; the database keeps
-// each lead's outreach status and notes. Nothing here sends email or messages: outreach needs the owner's approval and
-// is done outside this module.
+// each lead's outreach status and notes. Nothing here sends email: sending lives in the local outreach module.
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { now } from '../db/index.js'
@@ -33,7 +32,9 @@ export function createGtm({ db, root }) {
   db.exec(`CREATE TABLE IF NOT EXISTS gtm_emails (n INTEGER PRIMARY KEY, company TEXT NOT NULL, to_email TEXT NOT NULL,
     subject TEXT NOT NULL, body TEXT NOT NULL, icp TEXT, prepared INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL)`)
   // The email exactly as it goes out (rendered in the branded template on the Mac), so both dashboards preview it.
-  if (!db.prepare('PRAGMA table_info(gtm_emails)').all().some(c => c.name === 'html')) db.exec('ALTER TABLE gtm_emails ADD COLUMN html TEXT')
+  // role: 'support' (the company's published contact) or 'founder'; contact_name: the founder's name and title.
+  for (const [c, def] of [['html', 'TEXT'], ['role', "TEXT NOT NULL DEFAULT 'support'"], ['contact_name', 'TEXT']])
+    if (!db.prepare('PRAGMA table_info(gtm_emails)').all().some(x => x.name === c)) db.exec(`ALTER TABLE gtm_emails ADD COLUMN ${c} ${def}`)
   db.exec(`CREATE TABLE IF NOT EXISTS gtm_outreach (n INTEGER NOT NULL, kind TEXT NOT NULL, to_email TEXT NOT NULL, subject TEXT NOT NULL,
     message_id TEXT, thread_id TEXT, sent_at TEXT NOT NULL, PRIMARY KEY (n, kind))`)
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS gtm_outreach_n ON gtm_outreach (n)') // one first email per draft; the mirror upserts on n
@@ -87,6 +88,7 @@ export function createGtm({ db, root }) {
       verifiedEmails: count(l => l.email_status === 'published-personal'),
       genericEmails: count(l => l.email_status === 'generic-published'),
       noContact: count(l => !l.email),
+      founderContacts: all.reduce((n, l) => n + (Array.isArray(l.founders) ? l.founders.length : 0), 0),
       highPriority: count(l => l.priority === 'High'),
       outreachReady: count(l => l.status === 'outreach_ready'),
       sent: reached('sent'), replied: reached('replied'), interested: reached('interested'),
@@ -104,7 +106,7 @@ export function createGtm({ db, root }) {
     importLeads, leads, update, summary, statuses: LEAD_STATUSES,
     /** Every outreach email with its sent record (null while it is ready to send). */
     outreachEmails: () => db.prepare(`SELECT e.*, o.sent_at, o.message_id FROM gtm_emails e LEFT JOIN gtm_outreach o ON o.n = e.n AND o.kind = 'first' ORDER BY e.n`).all()
-      .map(r => ({ n: r.n, company: r.company, to: r.to_email, subject: r.subject, body: r.body, icp: r.icp, prepared: Boolean(r.prepared),
+      .map(r => ({ n: r.n, company: r.company, to: r.to_email, subject: r.subject, body: r.body, icp: r.icp, prepared: Boolean(r.prepared), role: r.role || 'support', contact_name: r.contact_name, html: r.html,
         sent: r.sent_at ? { sent_at: r.sent_at, message_id: r.message_id } : null })),
     icps: () => readJson(path.join(dir, 'icps.json')) || [],
     channels: () => readJson(path.join(dir, 'channels.json')) || [],

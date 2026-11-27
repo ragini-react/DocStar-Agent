@@ -8,7 +8,7 @@ async function call(u, o = {}) {
   return j
 }
 const waiting = new Map() // n → hosted command id; sends queued from the hosted dashboard, not yet reported back
-const tag = e => (e.icp ? `<span class="tag">ICP: ${esc(e.icp)}</span>` : '')
+const tag = e => (e.role === 'founder' ? `<span class="tag founder">Founder${e.contact_name ? `: ${esc(e.contact_name)}` : ''}</span>` : '<span class="tag">Support / contact</span>') + (e.icp ? `<span class="tag">ICP: ${esc(e.icp)}</span>` : '')
 const head = e => `<b>${esc(e.company)}</b>${tag(e)}<div>To: ${esc(e.to)}</div><div>Subject: ${esc(e.subject)}</div>`
 // The preview is the branded HTML exactly as sent (sandboxed: no scripts, links open nothing here).
 const body = e => `<details><summary>Show email</summary>${e.html ? `<iframe sandbox title="Email preview" srcdoc="${esc(e.html)}" style="width:100%;height:900px;border:1px solid #ddd;border-radius:8px;background:#fff"></iframe>` : `<pre>${esc(e.body)}</pre>`}</details>`
@@ -46,5 +46,27 @@ document.addEventListener('click', async ev => {
     await load()
   } catch (e) { alert(`Not sent: ${e.message}`); b.disabled = false; b.textContent = 'Send' }
 })
+// Sender controls: Send all ready (spaced, under the daily cap) and the auto-sender toggle.
+async function loadSender() {
+  let st; try { st = await call('/api/outreach/sender') } catch { document.getElementById('sender').hidden = true; return }
+  document.getElementById('sender').innerHTML = `<b>Sending</b> from support@docstar.io on the Mac · ${st.sentToday} sent in the last 24 h (cap ${st.cap}) · ${st.ready} ready${st.sending ? ' · <b>sending now…</b>' : ''}
+    <div style="margin-top:8px"><button class="primary" id="send-all" ${st.ready ? '' : 'disabled'}>Send all ready (${st.ready})</button>
+    <label style="margin-left:12px"><input type="checkbox" id="auto" ${st.auto ? 'checked' : ''}> Auto-send new emails as the ICP search prepares them</label>
+    <label style="margin-left:12px">Daily cap <input id="cap" type="number" min="1" max="200" value="${st.cap}" style="width:60px"></label></div>
+    <div class="muted small" style="margin-top:6px">Emails go one at a time, about ${Math.round(st.gapSeconds || 90)} s apart, never twice to the same address, so Gmail does not flag the account.</div>`
+}
+document.addEventListener('change', async ev => {
+  if (ev.target.id === 'auto') { if (ev.target.checked && !confirm('Turn on auto-send? Every new email from the ICP search will be sent without a click (spaced out, up to the daily cap).')) { ev.target.checked = false; return }
+    await call('/api/outreach/sender', { method: 'POST', body: JSON.stringify({ auto: ev.target.checked }) }).catch(e => alert(e.message)); loadSender() }
+  if (ev.target.id === 'cap') { await call('/api/outreach/sender', { method: 'POST', body: JSON.stringify({ cap: Number(ev.target.value) }) }).catch(e => alert(e.message)); loadSender() }
+})
+document.addEventListener('click', async ev => {
+  if (ev.target.id !== 'send-all') return
+  if (!confirm('Send every ready email now? They go one at a time, spaced out, up to the daily cap.')) return
+  ev.target.disabled = true
+  try { await call('/api/outreach/send-all', { method: 'POST', body: JSON.stringify({ confirm: true }) }) } catch (e) { alert(e.message) }
+  loadSender()
+})
+loadSender(); setInterval(loadSender, 15000)
 load()
 setInterval(() => { if (!waiting.size) load() }, 15000)
