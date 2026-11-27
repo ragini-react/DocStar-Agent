@@ -310,6 +310,7 @@ function actionsFor(p) {
   if (['discovered', 'rejected', 'paid_skipped', 'evaluation_failed'].includes(p.status)) a.push(['qualify', 'Evaluate now'])
   if (!DONE.has(p.status)) a.push(['manual', 'Mark as done manually…'])
   a.push(['listing-url', p.listing_url ? 'Change listing URL…' : 'Set listing URL…'])
+  if (p.listing_url) a.push(['extra-listing', 'Add another listing URL…'])
   if (p.backlink_url) a.push(['check-backlink', 'Check backlink now'])
   if (IN_FLIGHT.has(p.status) || p.status === 'approved' || ['evaluation_failed', 'registration_failed', 'submission_failed'].includes(p.status)) a.push(['needs-you', 'Hand to me (needs you)'])
   if (!['rejected', 'paid_skipped'].includes(p.status) && !DONE.has(p.status)) { a.push(['rejected', 'Reject…']); a.push(['paid_skipped', 'Mark paid / skip…']) }
@@ -321,6 +322,7 @@ function reasonText(p) {
   if (p.status === 'needs_you' && p.needs_you_reason) { try { return JSON.parse(p.needs_you_reason).what } catch { return p.needs_you_reason } }
   return p.status_reason ? label(p.status_reason) : ''
 }
+const extraLinks = p => { try { return JSON.parse(p.extra_listing_urls || '[]').map((u, i) => ` · ${link(u, `listing ${i + 2}`)}`).join('') } catch { return '' } }
 function platformRow(p) {
   const why = reasonText(p)
   return `<tr data-id="${p.id}">
@@ -330,7 +332,7 @@ function platformRow(p) {
     <td>${esc(label(p.pricing))}</td>
     <td><span class="pill ${STATUS_TONE[p.status] ?? ''}">${esc(label(p.status))}</span>${why ? `<div class="sub" title="${esc(why)}">${esc(why.slice(0, 80))}</div>` : ''}</td>
     <td>${p.account_email ? `${esc(p.account_email)}<div class="sub">${esc(p.signup_completed_at ? `${label(p.login_method)} · signed up` : label(p.account_status))}</div>` : '—'}</td>
-    <td>${p.listing_url ? `${link(p.listing_url, 'listing')}<div class="sub">${esc(label(p.submission_status))}${p.manual_submission ? ' · by you' : ''}</div>` : esc(p.submission_status ? label(p.submission_status) : '—')}</td>
+    <td>${p.listing_url ? `${link(p.listing_url, 'listing')}${extraLinks(p)}<div class="sub">${esc(label(p.submission_status))}${p.manual_submission ? ' · by you' : ''}</div>` : esc(p.submission_status ? label(p.submission_status) : '—')}</td>
     <td>${p.backlink_url ? `${link(p.backlink_url, 'page')}<div class="sub">${esc(label(p.backlink_status))}${p.is_dofollow === 1 ? ' · dofollow' : p.is_dofollow === 0 ? ` · ${esc(p.backlink_rel || 'nofollow')}` : ''}</div>` : '—'}</td>
     <td>${fmtTime(p.last_checked_at)}</td>
     <td><select class="row-action" aria-label="Actions for ${esc(p.name)}"><option value="">Actions</option>
@@ -397,6 +399,11 @@ async function platformAction(id, action, button, name = 'this platform') {
     return act(button, `/api/platforms/${id}`, { method: 'PATCH', body: { status: action, note: note || undefined } }, done(`${name}: ${label(action)}`))
   }
   if (action === 'discovered') return act(button, `/api/platforms/${id}`, { method: 'PATCH', body: { status: 'discovered' } }, done(`${name}: back to discovered`))
+  if (action === 'extra-listing') {
+    const url = prompt(`Another public listing page for ${name} (https://…):`)
+    if (!url) return
+    return act(button, `/api/platforms/${id}/extra-listing-url`, { method: 'POST', body: { url } }, done(`${name}: listing added`))
+  }
   if (action === 'manual' || action === 'listing-url') return openManual(id, name, action === 'listing-url')
   if (action === 'needs-you') {
     const note = prompt(`Hand ${name} to you? The agent stops working on it. What should you do? (optional)`)
@@ -524,9 +531,9 @@ $('#needs-you').addEventListener('click', run(async e => {
 }))
 
 
-// ---------- growth: ICP & leads (research and tracking only; no sending) ----------
+// ---------- growth: ICP & leads (sending lives on the Outreach page) ----------
 const GTM_KPIS = [['icpCount', 'ICP categories'], ['researched', 'Companies researched'], ['qualified', 'Qualified leads (High/Med)'],
-  ['verifiedEmails', 'Published personal emails'], ['genericEmails', 'Published generic emails'], ['noContact', 'No contact found'],
+  ['verifiedEmails', 'Published personal emails'], ['genericEmails', 'Published generic emails'], ['founderContacts', 'Founder emails found'], ['noContact', 'No contact found'],
   ['highPriority', 'High priority'], ['outreachReady', 'Outreach ready'], ['sent', 'Emails sent'], ['replied', 'Replies'],
   ['interested', 'Interested'], ['demos', 'Demo requests'], ['signups', 'Sign-ups'], ['converted', 'Converted users']]
 let gtmLeads = [], gtmStatuses = []
@@ -539,7 +546,7 @@ const GTM_REACHED = { sent: ['sent', 'replied', 'interested', 'demo_requested', 
 const GTM_FILTERS = {
   researched: () => true, qualified: l => l.priority === 'High' || l.priority === 'Medium',
   verifiedEmails: l => l.email_status === 'published-personal', genericEmails: l => l.email_status === 'generic-published',
-  noContact: l => !l.email, highPriority: l => l.priority === 'High', outreachReady: l => l.status === 'outreach_ready',
+  noContact: l => !l.email, founderContacts: l => Array.isArray(l.founders) && l.founders.length > 0, highPriority: l => l.priority === 'High', outreachReady: l => l.status === 'outreach_ready',
   sent: l => GTM_REACHED.sent.includes(l.status), replied: l => GTM_REACHED.replied.includes(l.status),
   interested: l => GTM_REACHED.interested.includes(l.status), demos: l => GTM_REACHED.demo_requested.includes(l.status),
   signups: l => GTM_REACHED.signed_up.includes(l.status), converted: l => GTM_REACHED.converted.includes(l.status) }

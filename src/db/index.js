@@ -32,6 +32,8 @@ export function openDb(dbPath, { log = console.log } = {}) {
     if (broken.length) throw new Error(`migration left ${broken.length} broken foreign key(s): ${JSON.stringify(broken.slice(0, 3))}`)
   }
   db.pragma('foreign_keys = ON')
+  // Extra public listing pages on the same platform (e.g. a second profile), JSON array of URLs.
+  if (!db.prepare('PRAGMA table_info(submissions)').all().some(c => c.name === 'extra_listing_urls')) db.exec('ALTER TABLE submissions ADD COLUMN extra_listing_urls TEXT')
   return db
 }
 
