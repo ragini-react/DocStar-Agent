@@ -35,7 +35,7 @@ export function createGmail({ db, vault, activity, viasocket, config }) {
     serviceId: () => serviceIdFor(config.gmail.slug),
     // The action ids Connect asks consent for: reading mail, plus sending only where outreach is switched on (local).
     consentActions: () => [config.gmail.searchAction.id, config.gmail.getMessageAction.id,
-      ...(process.env.GTM_OUTREACH === '1' ? [config.gmail.sendAction.id] : [])],
+      ...(process.env.GTM_OUTREACH === '1' ? [config.gmail.sendAction.id, config.gmail.replyAction.id, config.gmail.threadAction.id] : [])],
     sendEnabled: () => process.env.GTM_OUTREACH === '1',
 
     /** Sends one email (HTML when the body has tags) from the connected account. Refused unless GTM_OUTREACH=1. Returns ids only. */
@@ -49,6 +49,26 @@ export function createGmail({ db, vault, activity, viasocket, config }) {
         throw new Error(/scope/i.test(msg) ? 'Gmail is connected without send permission: reconnect Gmail and allow sending' : `Gmail did not send: ${msg}`)
       }
       return { id: out.id, threadId: out.threadId ?? null }
+    },
+    /** Replies in an existing thread (a follow-up), to `to` only. Refused unless GTM_OUTREACH=1. Returns ids only. */
+    async replyInThread({ threadId, to, html, fromName }) {
+      if (process.env.GTM_OUTREACH !== '1') throw new Error('Sending is not enabled here')
+      const res = await runAction(config.gmail.replyAction, { threadId, replyMode: 'specific', to, messageType: 'html', htmlBody: html, ...(fromName ? { fromName } : {}) })
+      const out = res?.data ?? res
+      if (!out?.id) {
+        const msg = out?.originalError?.error?.message || out?.message || 'no message id returned'
+        throw new Error(/scope|permission/i.test(msg) ? 'Gmail is connected without reply permission: reconnect Gmail and allow it' : `Gmail did not send the follow-up: ${msg}`)
+      }
+      return { id: out.id, threadId: out.threadId ?? threadId }
+    },
+
+    /** Messages after the first one in a thread: [{ from, date, subject, text }]. Bodies stay in memory. */
+    async threadReplies(threadId) {
+      const res = await runAction(config.gmail.threadAction, { thread_id: threadId })
+      const out = res?.data ?? res
+      if (!Array.isArray(out?.replies)) throw new Error(out?.message || 'Gmail returned no thread')
+      return out.replies.map(r => ({ from: String(r.from || ''), date: r.date ? new Date(r.date).toISOString() : null, subject: r.subject || '',
+        text: String(r.plainBody || String(r.htmlBody || '').replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').trim() }))
     },
     embedToken: () => user().token(),
 

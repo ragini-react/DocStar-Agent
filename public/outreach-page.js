@@ -53,14 +53,24 @@ async function loadSender() {
     <div style="margin-top:8px"><button class="primary" id="send-all" ${st.ready ? '' : 'disabled'}>Send all ready (${st.ready})</button>
     <label style="margin-left:12px"><input type="checkbox" id="auto" ${st.auto ? 'checked' : ''}> Auto-send new emails as the ICP search prepares them</label>
     <label style="margin-left:12px">Daily cap <input id="cap" type="number" min="1" max="200" value="${st.cap}" style="width:60px"></label></div>
-    <div class="muted small" style="margin-top:6px">Emails go one at a time, about ${Math.round(st.gapSeconds || 90)} s apart, never twice to the same address, so Gmail does not flag the account.</div>`
+    <div style="margin-top:8px"><label><input type="checkbox" id="followups" ${st.followups ? 'checked' : ''}> Send follow-ups in the same thread (day 4, then a close-out on day 11) to anyone who has not replied</label></div>
+    <div class="muted small" style="margin-top:6px">Emails go one at a time, about ${Math.round(st.gapSeconds || 90)} s apart, never twice to the same address, so Gmail does not flag the account. Follow-ups share the daily cap.</div>
+    ${st.replies_interested !== undefined ? `<div style="margin-top:8px"><b>Replies</b> (checked hourly): ${st.replies_interested} interested · ${st.replies_other} other replies · ${st.replies_not_interested} not interested · ${st.replies_unsubscribe} unsubscribed · ${st.replies_bounce} bounced · ${(st.replies_out_of_office || 0) + (st.replies_auto_reply || 0)} auto-replies (follow-ups continue)
+      <div class="muted small">${st.followupsSent} follow-ups sent · ${st.suppressed} addresses or domains on the do-not-email list <button id="check-replies" style="margin-left:8px">Check replies now</button></div></div>` : ''}`
 }
 document.addEventListener('change', async ev => {
   if (ev.target.id === 'auto') { if (ev.target.checked && !confirm('Turn on auto-send? Every new email from the ICP search will be sent without a click (spaced out, up to the daily cap).')) { ev.target.checked = false; return }
     await call('/api/outreach/sender', { method: 'POST', body: JSON.stringify({ auto: ev.target.checked }) }).catch(e => alert(e.message)); loadSender() }
+  if (ev.target.id === 'followups') { if (ev.target.checked && !confirm('Turn on follow-ups? Everyone who has not replied gets a short follow-up in the same thread 4 days after the first email, and a close-out on day 11. Anyone who replies, unsubscribes or bounces gets nothing more.')) { ev.target.checked = false; return }
+    await call('/api/outreach/sender', { method: 'POST', body: JSON.stringify({ followups: ev.target.checked }) }).catch(e => alert(e.message)); loadSender() }
   if (ev.target.id === 'cap') { await call('/api/outreach/sender', { method: 'POST', body: JSON.stringify({ cap: Number(ev.target.value) }) }).catch(e => alert(e.message)); loadSender() }
 })
 document.addEventListener('click', async ev => {
+  if (ev.target.id === 'check-replies') {
+    ev.target.disabled = true
+    try { const r = await call('/api/outreach/replies/check', { method: 'POST', body: '{}' }); alert(r.queued ? 'Queued for the Mac' : `Checked ${r.checked} threads: ${r.found} new replies`) } catch (e) { alert(e.message) }
+    return loadSender()
+  }
   if (ev.target.id !== 'send-all') return
   if (!confirm('Send every ready email now? They go one at a time, spaced out, up to the daily cap.')) return
   ev.target.disabled = true

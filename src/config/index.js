@@ -78,7 +78,10 @@ export function loadConfig() {
       searchAction: { id: 'rowr1h03w5cx', version: 'V23' },
       getMessageAction: { id: 'row8s689orsm', version: 'V3' },
       // Sending is opt-in (GTM_OUTREACH=1, local only): Connect then also asks for send consent.
-      sendAction: { id: 'rowogelpy0h6', version: 'V56' }
+      sendAction: { id: 'rowogelpy0h6', version: 'V56' },
+      // Outreach follow-ups go in the first email's thread; replies are read from that thread (both local only).
+      replyAction: { id: 'rowpco656a3b', version: 'V19' },
+      threadAction: { id: 'rowy64fw443v', version: 'V8' }
     }
   }
 }
