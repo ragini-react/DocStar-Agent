@@ -8,12 +8,13 @@ export const LEAD_STATUSES = [
   ['researched', 'Researched'], ['no_contact', 'No contact found'], ['outreach_ready', 'Outreach ready'],
   ['sent', 'Email sent'], ['replied', 'Replied'], ['interested', 'Interested'], ['demo_requested', 'Demo requested'],
   ['signed_up', 'Signed up'], ['converted', 'Converted (active user)'], ['not_interested', 'Not interested'],
+  ['unsubscribed', 'Unsubscribed'], ['bounced', 'Bounced'],
 ]
 const STATUS_KEYS = new Set(LEAD_STATUSES.map(([k]) => k))
 // Statuses at or past each funnel step, for the cumulative counts.
 const REACHED = {
-  sent: ['sent', 'replied', 'interested', 'demo_requested', 'signed_up', 'converted', 'not_interested'],
-  replied: ['replied', 'interested', 'demo_requested', 'signed_up', 'converted', 'not_interested'],
+  sent: ['sent', 'replied', 'interested', 'demo_requested', 'signed_up', 'converted', 'not_interested', 'unsubscribed', 'bounced'],
+  replied: ['replied', 'interested', 'demo_requested', 'signed_up', 'converted', 'not_interested', 'unsubscribed'],
   interested: ['interested', 'demo_requested', 'signed_up', 'converted'],
   demo_requested: ['demo_requested'], signed_up: ['signed_up', 'converted'], converted: ['converted'],
 }

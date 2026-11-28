@@ -1,6 +1,7 @@
 // The dashboard's HTTP API. Listens on 127.0.0.1 only; every /api route except login needs the admin session;
 // every write also needs the CSRF header and a same-origin request. Responses never carry a secret except the
 // one credential the operator explicitly reveals after typing the admin password again.
+import { createProfileGaps } from '../agent/profileGaps.js'
 import express from 'express'
 import { randomBytes } from 'node:crypto'
 import path from 'node:path'
@@ -301,6 +302,10 @@ export function createApp({ config, db, vault, activity, gmail, chrome, orchestr
     res.json({ ok: true })
   }))
   app.post('/api/company/draft', wrap(async (req, res) => res.json(await agent.company.draftFromWebsite())))
+  // Facts listing forms asked for that the profile lacks: one answer unblocks every platform waiting on it.
+  const profileGaps = createProfileGaps({ db, orchestrator, activity })
+  app.get('/api/profile-gaps', (req, res) => res.json(profileGaps.list()))
+  app.post('/api/profile-gaps', wrap(async (req, res) => res.json(profileGaps.answer(req.body?.answers || {}))))
   app.post('/api/company/approve', wrap(async (req, res) => res.json({ approved: agent.approveCompany() })))
 
   // Agent actions on one platform

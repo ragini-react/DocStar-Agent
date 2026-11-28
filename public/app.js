@@ -487,7 +487,24 @@ loaders.queue = async ({ soft = false } = {}) => {
   $('#approvals').innerHTML = approvals.length ? approvals.map(approvalCard).join('') : '<p class="muted">Nothing waiting for your approval.</p>'
   if (busy) { const fresh = $(`[data-approval="${busy.dataset.approval}"]`); if (fresh) fresh.replaceWith(busy) }
   $('#needs-you').innerHTML = items.length ? items.map(needsYouItem).join('') : '<p class="muted">Nothing is waiting for you.</p>'
+  if (!editing($('#profile-gaps'))) renderProfileGaps(await api('/api/profile-gaps'))
 }
+function renderProfileGaps(gaps) {
+  $('#profile-gaps-card').hidden = !gaps.length
+  $('#profile-gaps').innerHTML = gaps.length ? `${gaps.map(g => `<label><strong>${esc(g.label)}</strong> <span class="muted small">— ${g.platforms.length} platform${g.platforms.length === 1 ? '' : 's'}: ${g.platforms.map(p => esc(p.name)).join(', ')}${g.answered ? ' · answered before; a new answer replaces it' : ''}</span>
+      <input name="${esc(g.key)}" autocomplete="off"></label>`).join('')}
+    <div class="row"><button class="btn primary" type="submit">Save and retry</button></div>` : ''
+}
+$('#profile-gaps').addEventListener('submit', run(async e => {
+  e.preventDefault()
+  const form = e.currentTarget
+  const answers = Object.fromEntries([...new FormData(form)].filter(([, v]) => String(v).trim()))
+  if (!Object.keys(answers).length) return toast('Fill in at least one fact', true)
+  await act(e.submitter, '/api/profile-gaps', { method: 'POST', body: { answers } }, async r => {
+    toast(`Saved ${r.saved.length} fact${r.saved.length === 1 ? '' : 's'}; ${r.retried} platform${r.retried === 1 ? '' : 's'} retried${r.errors?.length ? ` (${r.errors.length} could not: ${r.errors.join('; ')})` : ''}`, 'ok')
+    form.reset(); await loaders.queue()
+  })
+}))
 function approvalCard(a) {
   const l = a.listing || {}
   const s = a.payload?.score || {}
@@ -539,8 +556,8 @@ const GTM_KPIS = [['icpCount', 'ICP categories'], ['researched', 'Companies rese
 let gtmLeads = [], gtmStatuses = []
 const gtmBars = (el, obj, field) => { el.innerHTML = Object.entries(obj).sort((a, b) => b[1] - a[1]).map(([k, n]) => `<div class="small gtm-bar" role="link" tabindex="0" data-field="${field}" data-value="${esc(k)}" style="cursor:pointer"><strong>${esc(k)}</strong>: ${n} <span class="muted">→ view</span></div>`).join('') || '<p class="muted small">No leads yet</p>' }
 // Each Growth tile opens the matching leads (same rules as the counts in src/gtm/service.js).
-const GTM_REACHED = { sent: ['sent', 'replied', 'interested', 'demo_requested', 'signed_up', 'converted', 'not_interested'],
-  replied: ['replied', 'interested', 'demo_requested', 'signed_up', 'converted', 'not_interested'],
+const GTM_REACHED = { sent: ['sent', 'replied', 'interested', 'demo_requested', 'signed_up', 'converted', 'not_interested', 'unsubscribed', 'bounced'],
+  replied: ['replied', 'interested', 'demo_requested', 'signed_up', 'converted', 'not_interested', 'unsubscribed'],
   interested: ['interested', 'demo_requested', 'signed_up', 'converted'], demo_requested: ['demo_requested'],
   signed_up: ['signed_up', 'converted'], converted: ['converted'] }
 const GTM_FILTERS = {
